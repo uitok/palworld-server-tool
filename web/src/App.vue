@@ -3,6 +3,8 @@ import { zhCN, dateZhCN, jaJP, dateJaJP, darkTheme } from "naive-ui";
 import pageStore from "@/stores/model/page.js";
 import { onMounted } from "vue";
 
+const SUPPORTED_LOCALES = ["zh", "en", "ja"];
+
 const isDarkMode = ref(
   window.matchMedia("(prefers-color-scheme: dark)").matches
 );
@@ -18,45 +20,50 @@ const themeOverrides = {
   },
 };
 
-const locale = ref(null);
-const uiLocale = ref(null);
-const uiDateLocale = ref(null);
+const locale = ref("zh");
+const uiLocale = ref(zhCN);
+const uiDateLocale = ref(dateZhCN);
 
-// 移动端适配
-// 监听窗口宽度变化
-let getScreenWidth = function () {
-  let scrollWidth = document.documentElement.clientWidth || window.innerWidth;
+const resolveLocale = () => {
+  const savedLocale = localStorage.getItem("locale");
+  return SUPPORTED_LOCALES.includes(savedLocale) ? savedLocale : "zh";
+};
+
+const applyLocale = (nextLocale) => {
+  locale.value = nextLocale;
+  if (nextLocale === "ja") {
+    uiLocale.value = jaJP;
+    uiDateLocale.value = dateJaJP;
+    return;
+  }
+  if (nextLocale === "en") {
+    uiLocale.value = null;
+    uiDateLocale.value = null;
+    return;
+  }
+  uiLocale.value = zhCN;
+  uiDateLocale.value = dateZhCN;
+};
+
+const getScreenWidth = () => {
+  const scrollWidth = document.documentElement.clientWidth || window.innerWidth;
   pageStore().setScreenWidth(scrollWidth);
 };
+
+const initialLocale = resolveLocale();
+localStorage.setItem("locale", initialLocale);
+applyLocale(initialLocale);
+getScreenWidth();
 
 onMounted(() => {
   const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
   mediaQuery.addEventListener("change", updateDarkMode);
   isDarkMode.value = mediaQuery.matches;
   getScreenWidth();
-  window.onresize = function () {
+  window.onresize = () => {
     getScreenWidth();
   };
-
-  let localLocale = localStorage.getItem("locale");
-  if (localLocale) {
-    locale.value = localLocale;
-    if (locale.value == "zh") {
-      uiLocale.value = zhCN;
-      uiDateLocale.value = dateZhCN;
-    } else if (locale.value == "ja") {
-      uiLocale.value = jaJP;
-      uiDateLocale.value = dateJaJP;
-    } else if (locale.value == "en") {
-      uiLocale.value = null;
-      uiDateLocale.value = null;
-    }
-  } else {
-    localStorage.setItem("locale", "zh");
-    locale.value = "zh";
-    uiLocale.value = zhCN;
-    uiDateLocale.value = dateZhCN;
-  }
+  applyLocale(resolveLocale());
 });
 </script>
 

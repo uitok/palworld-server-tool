@@ -110,6 +110,11 @@ const getUserAvatar = () => {
             <span class="pl-2 font-bold">{{ guild.name }}</span>
           </n-list-item>
         </n-list>
+        <n-empty
+          v-if="!loadingGuild && guildList.length === 0"
+          class="mt-6"
+          description="No guilds yet"
+        />
         <n-spin
           size="small"
           v-if="loadingGuild"
@@ -193,6 +198,11 @@ const getUserAvatar = () => {
             ></n-list>
           </n-space>
         </n-card>
+        <n-empty
+          v-if="!loadingGuildDetail && !guildInfo.name"
+          class="mt-20"
+          description="No guild details yet"
+        />
         <n-spin
           size="small"
           v-if="loadingGuildDetail"

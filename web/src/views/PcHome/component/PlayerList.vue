@@ -212,6 +212,11 @@ const displayLastOnline = (last_online) => {
             </div>
           </n-list-item>
         </n-list>
+        <n-empty
+          v-if="!loadingPlayer && playerList.length === 0"
+          class="mt-6"
+          description="No players yet"
+        />
         <n-spin
           size="small"
           v-if="loadingPlayer"
@@ -222,10 +227,16 @@ const displayLastOnline = (last_online) => {
       </n-layout-sider>
       <n-layout :native-scrollbar="false" class="relative">
         <player-detail
+          v-if="playerInfo"
           :playerInfo="playerInfo"
           :playerPalsList="playerPalsList"
           :whiteList="whiteList"
         ></player-detail>
+        <n-empty
+          v-if="!loadingPlayerDetail && !playerInfo"
+          class="mt-20"
+          description="No player details yet"
+        />
         <n-spin
           size="small"
           v-if="loadingPlayerDetail"

@@ -6,7 +6,14 @@ import { onMounted } from "vue";
 import userStore from "@/stores/model/user";
 
 const PALWORLD_TOKEN = "palworld_token";
-const pageWidth = computed(() => pageStore().getScreenWidth());
+const pageWidth = computed(() => {
+  return (
+    pageStore().getScreenWidth() ||
+    document.documentElement.clientWidth ||
+    window.innerWidth ||
+    1024
+  );
+});
 
 onMounted(() => {
   let token = localStorage.getItem(PALWORLD_TOKEN);

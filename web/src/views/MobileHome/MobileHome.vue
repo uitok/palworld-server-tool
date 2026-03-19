@@ -25,6 +25,11 @@ const message = useMessage();
 const dialog = useDialog();
 
 const PALWORLD_TOKEN = "palworld_token";
+const SUPPORTED_LOCALES = ["zh", "en", "ja"];
+const getSafeLocale = () => {
+  const savedLocale = localStorage.getItem("locale");
+  return SUPPORTED_LOCALES.includes(savedLocale) ? savedLocale : "zh";
+};
 
 const loading = ref(false);
 const serverInfo = ref({});
@@ -72,17 +77,21 @@ const handleSelectLanguage = (key) => {
 };
 
 const getSkillTypeList = () => {
-  if (skillMap[locale.value]) {
-    return Object.values(skillMap[locale.value]).map((item) => item.name);
-  } else {
-    return [];
-  }
+  const currentSkillMap = skillMap[locale.value] || skillMap.zh || {};
+  return Object.values(currentSkillMap).map((item) => item.name);
 };
 
 // get data
 const getServerInfo = async () => {
-  const { data } = await new ApiService().getServerInfo();
-  serverInfo.value = data.value;
+  const { data, statusCode } = await new ApiService().getServerInfo();
+  if (statusCode.value === 200 && data.value) {
+    serverInfo.value = data.value;
+  } else {
+    serverInfo.value = {
+      name: "REST API unavailable",
+      version: "",
+    };
+  }
 };
 const getPlayerList = async (is_update_info = true) => {
   getOnlineList();
@@ -325,7 +334,8 @@ const isTokenExpired = (token) => {
 };
 
 onMounted(async () => {
-  locale.value = localStorage.getItem("locale");
+  locale.value = getSafeLocale();
+  localStorage.setItem("locale", locale.value);
   languageOptions.value = [
     {
       label: "简体中文",
@@ -343,9 +353,9 @@ onMounted(async () => {
       disabled: locale.value == "ja",
     },
   ];
-  localeLowerPalMap.value = Object.keys(palMap[locale.value]).reduce(
+  localeLowerPalMap.value = Object.keys(palMap[locale.value] || palMap.zh || {}).reduce(
     (acc, key) => {
-      acc[key.toLowerCase()] = palMap[locale.value][key];
+      acc[key.toLowerCase()] = (palMap[locale.value] || palMap.zh || {})[key];
       return acc;
     },
     {}
@@ -355,11 +365,9 @@ onMounted(async () => {
   isDarkMode.value = mediaQuery.matches;
 
   skillTypeList.value = getSkillTypeList();
-  loading.value = true;
   checkAuthToken();
   getServerInfo();
   await getPlayerList();
-  loading.value = false;
   setInterval(() => {
     getPlayerList(false);
   }, 60000);
@@ -429,7 +437,7 @@ onMounted(async () => {
       </n-space>
     </div>
     <div class="w-full">
-      <div class="rounded-lg" v-if="!loading && playerList.length > 0">
+      <div class="rounded-lg" v-if="!loading">
         <n-layout style="height: calc(100vh - 86px)" has-sider>
           <n-layout-header
             class="flex flex-col justify-between"
@@ -524,16 +532,26 @@ onMounted(async () => {
             <div v-if="!isShowDetail">
               <!-- list -->
               <player-list
-                v-if="currentDisplay === 'players'"
+                v-if="currentDisplay === 'players' && playerList.length > 0"
                 :playerList="playerList"
                 @onGetInfo="getChoosePlayer"
               ></player-list>
               <guild-list
-                v-if="currentDisplay === 'guilds'"
+                v-if="currentDisplay === 'guilds' && guildList.length > 0"
                 :guildList="guildList"
                 @onGetInfo="getChooseGuild"
               >
               </guild-list>
+              <n-empty
+                v-if="currentDisplay === 'players' && playerList.length === 0"
+                class="mt-6"
+                description="No players yet"
+              />
+              <n-empty
+                v-if="currentDisplay === 'guilds' && guildList.length === 0"
+                class="mt-6"
+                description="No guilds yet"
+              />
             </div>
             <!-- detail -->
             <div v-else class="relative">
