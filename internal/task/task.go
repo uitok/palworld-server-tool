@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -21,6 +22,7 @@ import (
 )
 
 var s gocron.Scheduler
+var schedulerOnce sync.Once
 
 func BackupTask(db *bbolt.DB) {
 	logger.Info("Scheduling backup...\n")
@@ -226,8 +228,8 @@ func initScheduler() gocron.Scheduler {
 }
 
 func getScheduler() gocron.Scheduler {
-	if s == nil {
-		return initScheduler()
-	}
+	schedulerOnce.Do(func() {
+		s = initScheduler()
+	})
 	return s
 }
