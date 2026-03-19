@@ -39,7 +39,7 @@ func loginHandler(c *gin.Context) {
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
 		"exp": time.Now().Add(time.Hour * 24).Unix(),
 	})
-	tokenString, err := token.SignedString(auth.SecretKey)
+	tokenString, err := token.SignedString(auth.GetSecretKey())
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "could not generate token"})
 		return

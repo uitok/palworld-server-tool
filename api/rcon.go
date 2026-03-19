@@ -17,6 +17,14 @@ type SendRconCommandRequest struct {
 	Content string `json:"content"`
 }
 
+type SendRawRconCommandRequest struct {
+	Command string `json:"command"`
+}
+
+type ImportRconPresetRequest struct {
+	Name string `json:"name"`
+}
+
 // sendRconCommand godoc
 //
 //	@Summary		Send Rcon Command
@@ -45,13 +53,50 @@ func sendRconCommand(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	execCommand := fmt.Sprintf("%s %s", rcon.Command, req.Content)
+	execCommand := strings.TrimSpace(fmt.Sprintf("%s %s", rcon.Command, req.Content))
 	response, err := tool.CustomCommand(execCommand)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"message": response})
+}
+
+func sendRawRconCommand(c *gin.Context) {
+	var req SendRawRconCommandRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	req.Command = strings.TrimSpace(req.Command)
+	if req.Command == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Command is required"})
+		return
+	}
+	response, err := tool.CustomCommand(req.Command)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"message": response})
+}
+
+func importRconPreset(c *gin.Context) {
+	var req ImportRconPresetRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	count, err := service.ImportRconPresetGroup(database.GetDB(), req.Name)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"count":   count,
+		"message": fmt.Sprintf("Imported %d RCON commands", count),
+	})
 }
 
 // importRconCommands godoc

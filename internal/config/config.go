@@ -41,6 +41,12 @@ type Config struct {
 		BackupInterval int    `mapstructure:"backup_interval"`
 		BackupKeepDays int    `mapstructure:"backup_keep_days"`
 	} `mapstructure:"save"`
+	PalDefender struct {
+		Enabled bool   `mapstructure:"enabled"`
+		Address string `mapstructure:"address"`
+		AuthKey string `mapstructure:"auth_key"`
+		Timeout int    `mapstructure:"timeout"`
+	} `mapstructure:"paldefender"`
 	Manage struct {
 		KickNonWhitelist bool `mapstructure:"kick_non_whitelist"`
 	}
@@ -78,6 +84,10 @@ func Init(cfgFile string, conf *Config) {
 	viper.SetDefault("save.sync_interval", 600)
 	viper.SetDefault("save.backup_interval", 14400)
 	viper.SetDefault("save.backup_keep_days", 7)
+
+	viper.SetDefault("paldefender.enabled", false)
+	viper.SetDefault("paldefender.address", "http://127.0.0.1:17993")
+	viper.SetDefault("paldefender.timeout", 5)
 
 	viper.SetEnvPrefix("")
 	viper.SetEnvKeyReplacer(strings.NewReplacer(".", "__"))
