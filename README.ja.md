@@ -198,6 +198,9 @@ mkdir -p pst && tar -xzf pst_v0.10.0_linux_x86_64.tar.gz -C pst
      kick_non_whitelist: false
    ```
 
+> [!TIP]
+> プレイヤー詳細やコントロールセンターでライブのクイック付与（アイテム / パル / 卵 / テンプレート / 経験値 / 技術ポイント）を使う場合は、先にゲームサーバーへ `PalDefender` を導入・設定し、`paldefender.enabled`、`paldefender.address`、`paldefender.auth_key` を正しく設定してください。これらのライブ操作では対象プレイヤーがオンラインである必要があります。
+
 ##### 実行
 
 ```bash
@@ -317,6 +320,18 @@ save:
   backup_interval: 14400
   # Sav Backup Keep Days アーカイブ自動バックアップを保持する日数です、日単位
   backup_keep_days: 7
+
+
+# PalDefender REST API 設定（ライブのアイテム / パル / 卵 / テンプレート付与に使用）
+paldefender:
+  # PalDefender REST 機能を有効にするか
+  enabled: false
+  # PalDefender REST API のアドレス
+  address: "http://127.0.0.1:17993"
+  # PalDefender の Bearer 認証キー
+  auth_key: ""
+  # 通信タイムアウト（秒）、推奨 <= 5
+  timeout: 5
 
 # Automation Config 自動化管理関連
 manage:

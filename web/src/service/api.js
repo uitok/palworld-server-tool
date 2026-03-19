@@ -84,6 +84,16 @@ class ApiService extends Service {
     return this.fetch(`/api/rcon/send`).post(data).json();
   }
 
+  async sendRawRconCommand(param) {
+    let data = param;
+    return this.fetch(`/api/rcon/raw`).post(data).json();
+  }
+
+  async importRconPreset(param) {
+    let data = param;
+    return this.fetch(`/api/rcon/preset`).post(data).json();
+  }
+
   async addRconCommand(param) {
     let data = param;
     return this.fetch(`/api/rcon`).post(data).json();
@@ -96,6 +106,51 @@ class ApiService extends Service {
 
   async removeRconCommand(uuid) {
     return this.fetch(`/api/rcon/${uuid}`).delete().json();
+  }
+
+  async grantPlayerItems(param) {
+    const { playerUid, ...data } = param;
+    return this.fetch(`/api/player/${playerUid}/items/grant`).post(data).json();
+  }
+
+  async adjustPlayerItems(param) {
+    const { playerUid, ...data } = param;
+    return this.fetch(`/api/player/${playerUid}/items/adjust`).post(data).json();
+  }
+
+  async clearPlayerInventory(param) {
+    const { playerUid, ...data } = param;
+    return this.fetch(`/api/player/${playerUid}/items/clear`).post(data).json();
+  }
+
+  async grantPlayerSupport(param) {
+    const { playerUid, ...data } = param;
+    return this.fetch(`/api/player/${playerUid}/support/grant`).post(data).json();
+  }
+
+  async grantPlayerPal(param) {
+    const { playerUid, ...data } = param;
+    return this.fetch(`/api/player/${playerUid}/pals/grant`).post(data).json();
+  }
+
+  async grantPlayerPalEgg(param) {
+    const { playerUid, ...data } = param;
+    return this.fetch(`/api/player/${playerUid}/pals/grant-egg`).post(data).json();
+  }
+
+  async grantPlayerPalTemplate(param) {
+    const { playerUid, ...data } = param;
+    return this.fetch(`/api/player/${playerUid}/pals/grant-template`).post(data).json();
+  }
+
+  async exportPlayerPals(param) {
+    const { playerUid, ...data } = param;
+    return this.fetch(`/api/player/${playerUid}/pals/export`).post(data).json();
+  }
+
+  async deletePlayerPals(param) {
+    const { playerUid, ...data } = param;
+    return this.fetch(`/api/player/${playerUid}/pals/delete`).post(data).json();
   }
 
   async getBackupList(param) {

@@ -318,11 +318,26 @@ save:
   # Save Backup Keep Days
   backup_keep_days: 7
 
+
+# PalDefender REST API Config (used for live item / pal / egg / template grants)
+paldefender:
+  # Enable PalDefender REST features
+  enabled: false
+  # PalDefender REST API address
+  address: "http://127.0.0.1:17993"
+  # PalDefender Bearer auth key
+  auth_key: ""
+  # Request timeout in seconds, recommended <= 5
+  timeout: 5
+
 # Automation Config
 manage:
   # Auto Kick non-whitelisted
   kick_non_whitelist: false
 ```
+
+> [!TIP]
+> If you want to use the live quick grant actions in the player detail panel and control center (items / Pals / eggs / templates / EXP / tech points), install and configure `PalDefender` on the game server first, then fill in `paldefender.enabled`, `paldefender.address`, and `paldefender.auth_key` correctly. These live actions require the target player to be online.
 
 ##### Running
 

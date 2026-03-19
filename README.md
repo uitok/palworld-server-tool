@@ -218,6 +218,9 @@ mkdir -p pst && tar -xzf pst_v0.10.0_linux_x86_64.tar.gz -C pst
      kick_non_whitelist: false
    ```
 
+> [!TIP]
+> 若你希望在玩家详情和控制中心里使用“实时发物品 / 发帕鲁 / 发蛋 / 发模板 / 发经验与科技点”等快捷功能，请先在游戏服务器安装并配置 `PalDefender`，然后正确填写上面的 `paldefender.enabled`、`paldefender.address` 和 `paldefender.auth_key`。这类实时操作要求目标玩家在线。
+
 ##### 运行
 
 ```bash
@@ -337,6 +340,18 @@ save:
   backup_interval: 14400
   # 存档定时备份保留天数，默认为7天
   backup_keep_days: 7
+
+
+# PalDefender REST API 配置（用于实时发物品 / 发帕鲁 / 发蛋 / 发模板）
+paldefender:
+  # 是否启用 PalDefender REST 功能
+  enabled: false
+  # PalDefender REST API 地址
+  address: "http://127.0.0.1:17993"
+  # PalDefender 的 Bearer Auth Key
+  auth_key: ""
+  # 通信超时时间，推荐 <= 5
+  timeout: 5
 
 # Automation Config 自动化管理相关
 manage:

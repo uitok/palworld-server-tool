@@ -44,6 +44,11 @@ const message = useMessage();
 const dialog = useDialog();
 
 const PALWORLD_TOKEN = "palworld_token";
+const SUPPORTED_LOCALES = ["zh", "en", "ja"];
+const getSafeLocale = () => {
+  const savedLocale = localStorage.getItem("locale");
+  return SUPPORTED_LOCALES.includes(savedLocale) ? savedLocale : "zh";
+};
 
 const pageWidth = computed(() => pageStore().getScreenWidth());
 const smallScreen = computed(() => pageWidth.value < 1024);
@@ -98,11 +103,8 @@ const handleSelectLanguage = (key) => {
 };
 
 const getSkillTypeList = () => {
-  if (skillMap[locale.value]) {
-    return Object.values(skillMap[locale.value]).map((item) => item.name);
-  } else {
-    return [];
-  }
+  const currentSkillMap = skillMap[locale.value] || skillMap.zh || {};
+  return Object.values(currentSkillMap).map((item) => item.name);
 };
 
 const toPalConf = () => {
@@ -143,13 +145,26 @@ const isNewVersion = (version, latest) => {
 
 // get data
 const getServerInfo = async () => {
-  const { data } = await new ApiService().getServerInfo();
-  serverInfo.value = data.value;
+  const { data, statusCode } = await new ApiService().getServerInfo();
+  if (statusCode.value === 200 && data.value) {
+    serverInfo.value = data.value;
+  } else {
+    serverInfo.value = {
+      name: "REST API unavailable",
+      version: "",
+    };
+  }
 };
 
 const getServerMetrics = async () => {
-  const { data } = await new ApiService().getServerMetrics();
-  serverMetrics.value = data.value;
+  const { data, statusCode } = await new ApiService().getServerMetrics();
+  if (statusCode.value === 200 && data.value) {
+    serverMetrics.value = data.value;
+  } else {
+    serverMetrics.value = {
+      current_player_num: 0,
+    };
+  }
 };
 
 const getPlayerList = async () => {
@@ -160,9 +175,10 @@ const getPlayerList = async () => {
   });
   playerList.value = data.value;
   rconPlayerOptions.value = data.value.map((item) => {
+    const online = dayjs().diff(dayjs(item.last_online)) < 80000;
     return {
-      label: `${item.nickname}(${item.player_uid})`,
-      value: `${item.player_uid}|${item.user_id}|${item.steam_id}`,
+      label: `[${online ? t("status.online") : t("status.offline")}] ${item.nickname}(${item.player_uid})`,
+      value: `${item.player_uid}|${item.user_id}|${item.steam_id}|${item.last_online || ""}`,
     };
   });
 };
@@ -200,6 +216,10 @@ const rconSelectedItem = ref(null);
 const rconItemOptions = ref([]);
 const rconSelectedPal = ref(null);
 const rconPalOptions = ref([]);
+const rconSelectedEgg = ref(null);
+const rconEggOptions = ref([]);
+const rconCommandAmount = ref(1);
+const rconCommandLevel = ref(1);
 const rconCommandsExtra = ref({});
 const copyText = async (text) => {
   if (text == "" || text == null) {
@@ -261,6 +281,175 @@ const sendRconCommand = async (uuid) => {
     }
   }
 };
+const sendRawRconCommand = async (command) => {
+  if (checkAuthToken()) {
+    const { data, statusCode } = await new ApiService().sendRawRconCommand({
+      command,
+    });
+    if (statusCode.value === 200) {
+      message.info(data.value?.message || t("message.rconsuccess"));
+      return true;
+    }
+    message.error(t("message.rconfail", { err: data.value?.error }));
+  }
+  return false;
+};
+const getSelectedRconPlayerParts = () => {
+  return rconSelectedPlayer.value ? rconSelectedPlayer.value.split("|") : [];
+};
+const getSelectedPlayerPayload = () => {
+  const playerParts = getSelectedRconPlayerParts();
+  if (!playerParts.length) {
+    message.warning(t("message.selectPlayerFirst"));
+    return null;
+  }
+  const [playerUid, userId, steamId, lastOnline] = playerParts;
+  return {
+    playerUid,
+    player_uid: playerUid,
+    user_id: userId || "",
+    steam_id: steamId || "",
+    last_online: lastOnline || "",
+  };
+};
+const getSelectedSteamUserId = () => {
+  const playerPayload = getSelectedPlayerPayload();
+  if (!playerPayload) {
+    return null;
+  }
+  if (!playerPayload.steam_id) {
+    message.warning(t("message.selectPlayerFirst"));
+    return null;
+  }
+  return "steam_" + playerPayload.steam_id;
+};
+const ensureSelectedLiveGrantReady = () => {
+  if (!checkAuthToken()) {
+    message.error(t("message.requireauth"));
+    return null;
+  }
+  const playerPayload = getSelectedPlayerPayload();
+  if (!playerPayload) {
+    return null;
+  }
+  if (!playerPayload.last_online || dayjs().diff(dayjs(playerPayload.last_online)) >= 80000) {
+    message.warning(t("message.playerMustBeOnline"));
+    return null;
+  }
+  return playerPayload;
+};
+const getPositiveNumber = (value, fallback = 1) => {
+  const parsed = Number.parseInt(String(value ?? fallback), 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+};
+const quickGiveItem = async () => {
+  const playerPayload = ensureSelectedLiveGrantReady();
+  if (!playerPayload) {
+    return;
+  }
+  if (!rconSelectedItem.value) {
+    message.warning(t("message.selectItemFirst"));
+    return;
+  }
+  const { data, statusCode } = await new ApiService().grantPlayerItems({
+    ...playerPayload,
+    item_id: rconSelectedItem.value,
+    amount: getPositiveNumber(rconCommandAmount.value),
+  });
+  if (statusCode.value === 200) {
+    message.success(t("message.itemActionSuccess"));
+    return;
+  }
+  message.error(t("message.itemActionFail", { err: data.value?.error || data.value?.message || "Unknown error" }));
+};
+const quickGivePal = async () => {
+  const playerPayload = ensureSelectedLiveGrantReady();
+  if (!playerPayload) {
+    return;
+  }
+  if (!rconSelectedPal.value) {
+    message.warning(t("message.selectPalFirst"));
+    return;
+  }
+  const { data, statusCode } = await new ApiService().grantPlayerPal({
+    ...playerPayload,
+    pal_id: rconSelectedPal.value,
+    level: getPositiveNumber(rconCommandLevel.value),
+    amount: getPositiveNumber(rconCommandAmount.value),
+  });
+  if (statusCode.value === 200) {
+    message.success(t("message.palActionSuccess"));
+    return;
+  }
+  message.error(t("message.palActionFail", { err: data.value?.error || data.value?.message || "Unknown error" }));
+};
+const quickGiveEgg = async () => {
+  const playerPayload = ensureSelectedLiveGrantReady();
+  if (!playerPayload) {
+    return;
+  }
+  if (!rconSelectedEgg.value) {
+    message.warning(t("message.selectEggFirst"));
+    return;
+  }
+  if (!rconSelectedPal.value) {
+    message.warning(t("message.selectPalFirst"));
+    return;
+  }
+  const { data, statusCode } = await new ApiService().grantPlayerPalEgg({
+    ...playerPayload,
+    egg_id: rconSelectedEgg.value,
+    pal_id: rconSelectedPal.value,
+    level: getPositiveNumber(rconCommandLevel.value),
+    amount: getPositiveNumber(rconCommandAmount.value),
+  });
+  if (statusCode.value === 200) {
+    message.success(t("message.palActionSuccess"));
+    return;
+  }
+  message.error(t("message.palActionFail", { err: data.value?.error || data.value?.message || "Unknown error" }));
+};
+const quickGrantByAmount = async (kind) => {
+  const playerPayload = ensureSelectedLiveGrantReady();
+  if (!playerPayload) {
+    return;
+  }
+  const { data, statusCode } = await new ApiService().grantPlayerSupport({
+    ...playerPayload,
+    kind,
+    amount: getPositiveNumber(rconCommandAmount.value),
+  });
+  if (statusCode.value === 200) {
+    message.success(t("message.palActionSuccess"));
+    return;
+  }
+  message.error(t("message.palActionFail", { err: data.value?.error || data.value?.message || "Unknown error" }));
+};
+const buildRconSelectionOptions = () => {
+  const currentItems = itemMap[locale.value] || itemMap.zh || [];
+  rconItemOptions.value = currentItems.map((item) => {
+    return {
+      label: `${item.name}-${item.key}`,
+      value: item.key,
+    };
+  });
+  rconEggOptions.value = currentItems
+    .filter((item) => /^PalEgg_/i.test(item.key))
+    .map((item) => {
+      return {
+        label: `${item.name}-${item.key}`,
+        value: item.key,
+      };
+    });
+  rconPalOptions.value = Object.entries(palMap[locale.value] || palMap.zh || {}).map(
+    ([key, value]) => {
+      return {
+        label: `${value}-${key}`,
+        value: key,
+      };
+    }
+  );
+};
 
 const showRconAddModal = ref(false);
 const newRconCommand = ref("");
@@ -284,6 +473,19 @@ const handleImportRconError = (options) => {
     ? JSON.parse(options.event?.target?.response).error
     : "";
   message.error(t("message.importRconFail", { err }));
+};
+const importRconPreset = async (name) => {
+  if (checkAuthToken()) {
+    const { data, statusCode } = await new ApiService().importRconPreset({ name });
+    if (statusCode.value === 200) {
+      message.success(t("message.importRconPresetSuccess"));
+      await getRconCommands();
+      return;
+    }
+    message.error(
+      t("message.importRconPresetFail", { err: data.value?.error || "" })
+    );
+  }
 };
 const addRconCommand = async () => {
   if (checkAuthToken()) {
@@ -316,24 +518,21 @@ const removeRconCommand = async (uuid) => {
 };
 const fillRconCommand = (rconCommand) => {
   let cmd = rconCommand.placeholder;
-  const playerParts = rconSelectedPlayer.value ? rconSelectedPlayer.value.split("|") : [];
-  // {steamUserID}，大小写不敏感
+  const playerParts = getSelectedRconPlayerParts();
   if (/{steamUserID}/i.test(cmd)) {
-    if (!rconSelectedPlayer.value) {
+    if (!playerParts.length) {
       message.warning(t("message.selectPlayerFirst"));
       return;
     }
     cmd = cmd.replace(/{steamUserID}/gi, "steam_" + playerParts[2]);
   }
-  // {userID}，大小写不敏感
   if (/{userID}/i.test(cmd)) {
-    if (!rconSelectedPlayer.value) {
+    if (!playerParts.length) {
       message.warning(t("message.selectPlayerFirst"));
       return;
     }
     cmd = cmd.replace(/{userID}/gi, playerParts[1]);
   }
-  // {itemID}，大小写不敏感
   if (/{itemID}/i.test(cmd)) {
     if (!rconSelectedItem.value) {
       message.warning(t("message.selectItemFirst"));
@@ -341,7 +540,6 @@ const fillRconCommand = (rconCommand) => {
     }
     cmd = cmd.replace(/{itemID}/gi, rconSelectedItem.value);
   }
-  // {palID}，大小写不敏感
   if (/{palID}/i.test(cmd)) {
     if (!rconSelectedPal.value) {
       message.warning(t("message.selectPalFirst"));
@@ -349,7 +547,18 @@ const fillRconCommand = (rconCommand) => {
     }
     cmd = cmd.replace(/{palID}/gi, rconSelectedPal.value);
   }
-  // 最终写回原来的输入框
+  if (/{eggID}/i.test(cmd) || /{帕鲁蛋ID}/.test(cmd)) {
+    if (!rconSelectedEgg.value) {
+      message.warning(t("message.selectEggFirst"));
+      return;
+    }
+    cmd = cmd.replace(/{eggID}/gi, rconSelectedEgg.value).replace(/{帕鲁蛋ID}/g, rconSelectedEgg.value);
+  }
+  cmd = cmd
+    .replace(/{amount}/gi, String(getPositiveNumber(rconCommandAmount.value)))
+    .replace(/{数量}/g, String(getPositiveNumber(rconCommandAmount.value)))
+    .replace(/{level}/gi, String(getPositiveNumber(rconCommandLevel.value)))
+    .replace(/{等级}/g, String(getPositiveNumber(rconCommandLevel.value)));
   rconCommandsExtra.value[rconCommand.uuid] = cmd;
 };
 
@@ -396,15 +605,15 @@ const controlCenterOption = [
     key: "whitelist",
     icon: renderIcon(ShieldCheckmarkSharp),
   },
-  // {
-  //   label: () => {
-  //     return h("div", null, {
-  //       default: () => t("button.rcon"),
-  //     });
-  //   },
-  //   key: "rcon",
-  //   icon: renderIcon(Terminal),
-  // },
+  {
+    label: () => {
+      return h("div", null, {
+        default: () => t("button.rcon"),
+      });
+    },
+    key: "rcon",
+    icon: renderIcon(Terminal),
+  },
   {
     label: () => {
       return h("div", null, {
@@ -781,7 +990,8 @@ const downloadBackup = async (item) => {
 };
 
 onMounted(async () => {
-  locale.value = localStorage.getItem("locale");
+  locale.value = getSafeLocale();
+  localStorage.setItem("locale", locale.value);
   languageOptions.value = [
     {
       label: "简体中文",
@@ -803,30 +1013,14 @@ onMounted(async () => {
   mediaQuery.addEventListener("change", updateDarkMode);
   isDarkMode.value = mediaQuery.matches;
 
-  rconItemOptions.value = itemMap[locale.value].map((item) => {
-    return {
-      label: `${item.name}-${item.key}`,
-      value: item.key,
-    };
-  });
-
-  rconPalOptions.value = Object.entries(palMap[locale.value]).map(
-    ([key, value]) => {
-      return {
-        label: `${value}-${key}`,
-        value: key,
-      };
-    }
-  );
+  buildRconSelectionOptions();
   skillTypeList.value = getSkillTypeList();
-  loading.value = true;
   checkAuthToken();
   getServerInfo();
   getServerMetrics();
   getServerToolInfo();
   getPlayerList();
   await getWhiteList();
-  loading.value = false;
   await getBackupList();
   setInterval(async () => {
     await getPlayerList();
@@ -1204,7 +1398,23 @@ onMounted(async () => {
     :bordered="false"
     :segmented="segmented"
   >
-    <n-tabs default-value="import" size="large" justify-content="space-evenly">
+    <n-tabs default-value="preset" size="large" justify-content="space-evenly">
+      <n-tab-pane name="preset" :tab="$t('button.presetPack')">
+        <n-space vertical>
+          <n-alert type="info" :show-icon="false">
+            {{ $t("message.rconPresetOfficialDesc") }}
+          </n-alert>
+          <n-button type="primary" strong secondary @click="importRconPreset('official')">
+            {{ $t("button.importOfficialPreset") }}
+          </n-button>
+          <n-alert type="warning" :show-icon="false">
+            {{ $t("message.rconPresetPalDefenderDesc") }}
+          </n-alert>
+          <n-button type="warning" strong secondary @click="importRconPreset('paldefender')">
+            {{ $t("button.importPalDefenderPreset") }}
+          </n-button>
+        </n-space>
+      </n-tab-pane>
       <n-tab-pane name="import" :tab="$t('button.import')">
         <n-upload
           multiple
@@ -1271,6 +1481,10 @@ onMounted(async () => {
           {{ $t("button.addRcon") }}
         </n-button>
       </template>
+      <n-alert type="info" :show-icon="false">
+        {{ $t("message.rconQuickTip") }}
+      </n-alert>
+      <n-divider>{{ $t("button.quickGrant") }}</n-divider>
       <div class="flex w-full items-center">
         <n-select
           :placeholder="$t('input.selectPlayer')"
@@ -1278,24 +1492,6 @@ onMounted(async () => {
           filterable
           :options="rconPlayerOptions"
         />
-        <!-- <n-button
-          class="ml-2"
-          type="primary"
-          strong
-          secondary
-          @click="copyText(rconSelectedPlayer?.split('-')[1])"
-        >
-          {{ $t("button.copysid") }}
-        </n-button>
-        <n-button
-          class="ml-2"
-          type="primary"
-          strong
-          secondary
-          @click="copyText(rconSelectedPlayer?.split('-')[0])"
-        >
-          {{ $t("button.copypid") }}
-        </n-button> -->
       </div>
       <div class="flex w-full items-center mt-3 justify-between">
         <n-text>
@@ -1310,19 +1506,22 @@ onMounted(async () => {
           v-model:value="rconSelectedItem"
           filterable
           :options="rconItemOptions"
+          style="flex: 1"
         />
-        <!-- <n-button
+        <n-input-number
           class="ml-2"
-          type="primary"
-          strong
-          secondary
-          @click="copyText(rconSelectedItem)"
-        >
-          {{ $t("button.copyitem") }}
-        </n-button> -->
+          v-model:value="rconCommandAmount"
+          :min="1"
+          :precision="0"
+          style="width: 110px"
+        />
+        <n-button class="ml-2" type="primary" strong secondary @click="quickGiveItem">
+          {{ $t("button.quickGiveItem") }}
+        </n-button>
       </div>
       <div class="flex w-full items-center mt-3 justify-between">
         <n-text>ItemID: {{ rconSelectedItem || "-" }}</n-text>
+        <n-text>{{ $t("input.amount") }}: {{ rconCommandAmount || 1 }}</n-text>
       </div>
 
       <div class="flex w-full items-center mt-3">
@@ -1331,20 +1530,56 @@ onMounted(async () => {
           v-model:value="rconSelectedPal"
           filterable
           :options="rconPalOptions"
+          style="flex: 1"
         />
-        <!-- <n-button
+        <n-input-number
           class="ml-2"
-          type="primary"
-          strong
-          secondary
-          @click="copyText(rconSelectedPal)"
-        >
-          {{ $t("button.copypal") }}
-        </n-button> -->
+          v-model:value="rconCommandLevel"
+          :min="1"
+          :precision="0"
+          style="width: 110px"
+        />
+        <n-button class="ml-2" type="primary" strong secondary @click="quickGivePal">
+          {{ $t("button.quickGivePal") }}
+        </n-button>
       </div>
       <div class="flex w-full items-center mt-3 justify-between">
         <n-text>PalID: {{ rconSelectedPal || "-" }}</n-text>
+        <n-text>{{ $t("pal.level") }}: {{ rconCommandLevel || 1 }}</n-text>
       </div>
+
+      <div class="flex w-full items-center mt-3">
+        <n-select
+          :placeholder="$t('input.selectEgg')"
+          v-model:value="rconSelectedEgg"
+          filterable
+          :options="rconEggOptions"
+          style="flex: 1"
+        />
+        <n-button class="ml-2" type="primary" strong secondary @click="quickGiveEgg">
+          {{ $t("button.quickGiveEgg") }}
+        </n-button>
+      </div>
+      <div class="flex w-full items-center mt-3 justify-between">
+        <n-text>EggID: {{ rconSelectedEgg || "-" }}</n-text>
+      </div>
+
+      <div class="flex flex-wrap gap-2 mt-3">
+        <n-button size="small" tertiary @click="quickGrantByAmount('exp')">
+          {{ $t("button.quickGiveExp") }}
+        </n-button>
+        <n-button size="small" tertiary @click="quickGrantByAmount('relic')">
+          {{ $t("button.quickGiveRelic") }}
+        </n-button>
+        <n-button size="small" tertiary @click="quickGrantByAmount('tech_points')">
+          {{ $t("button.quickGiveTechPoints") }}
+        </n-button>
+        <n-button size="small" tertiary @click="quickGrantByAmount('ancient_tech_points')">
+          {{ $t("button.quickGiveBossTechPoints") }}
+        </n-button>
+      </div>
+
+      <n-divider>{{ $t("button.rcon") }}</n-divider>
       <n-empty class="mt-3" v-if="rconCommands.length == 0"> </n-empty>
       <n-collapse class="mt-3">
         <n-collapse-item

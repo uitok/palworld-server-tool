@@ -11,9 +11,16 @@ import (
 	"github.com/spf13/viper"
 )
 
-var SecretKey = []byte(viper.GetString("web.password"))
 var prefixBearer = "Bearer "
 var prefixJWT = "JWT "
+
+func getSecretKey() []byte {
+	return []byte(viper.GetString("web.password"))
+}
+
+func GetSecretKey() []byte {
+	return getSecretKey()
+}
 
 func JWTAuthMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
@@ -33,7 +40,7 @@ func JWTAuthMiddleware() gin.HandlerFunc {
 			if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
 				return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
 			}
-			return SecretKey, nil
+			return getSecretKey(), nil
 		})
 
 		if err != nil {
@@ -66,7 +73,7 @@ func OptionalJWTMiddleware() gin.HandlerFunc {
 			}
 			if tokenString != "" {
 				token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
-					return SecretKey, nil
+					return getSecretKey(), nil
 				})
 				if err == nil && token != nil {
 					if claims, ok := token.Claims.(jwt.MapClaims); ok && token.Valid {
@@ -84,7 +91,7 @@ func GenerateToken() (string, error) {
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
 		"exp": time.Now().Add(time.Hour * 24).Unix(),
 	})
-	tokenString, err := token.SignedString(SecretKey)
+	tokenString, err := token.SignedString(getSecretKey())
 	if err != nil {
 		return "", err
 	}

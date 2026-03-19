@@ -26,5 +26,11 @@ save:
   sync_interval: 120
   backup_interval: 14400
   backup_keep_days: 7
+# PalDefender REST API 配置（用于面板内实时发物品 / 发帕鲁 / 发蛋 / 发模板）
+paldefender:
+  enabled: false
+  address: "http://127.0.0.1:17993"
+  auth_key: ""
+  timeout: 5
 manage:
   kick_non_whitelist: false

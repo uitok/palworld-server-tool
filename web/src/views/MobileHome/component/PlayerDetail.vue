@@ -11,6 +11,8 @@ import skillMap from "@/assets/skill.json";
 import PalDetail from "./PalDetail.vue";
 import userStore from "@/stores/model/user";
 import ApiService from "@/service/api.js";
+import PlayerItemOperations from "@/components/PlayerItemOperations.vue";
+import PlayerPalOperations from "@/components/PlayerPalOperations.vue";
 
 const { t, locale } = useI18n();
 
@@ -307,6 +309,19 @@ onMounted(async () => {
             <!-- <n-flex justify="end">Updated at 2022-01-01</n-flex> -->
           </template>
         </n-page-header>
+        <player-pal-operations
+          v-if="isLogin"
+          class="mt-4"
+          :player-info="playerInfo"
+          :player-pals-list="currentPlayerPalsList"
+          compact
+        />
+        <player-item-operations
+          v-if="isLogin"
+          class="mt-4"
+          :player-info="playerInfo"
+          compact
+        />
         <!-- <n-space vertical>
           <n-progress
             type="line"

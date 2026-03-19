@@ -14,6 +14,8 @@ import whitelistStore from "@/stores/model/whitelist.js";
 import playerToGuildStore from "@/stores/model/playerToGuild.js";
 import userStore from "@/stores/model/user";
 import palItems from "@/assets/items.json";
+import PlayerItemOperations from "@/components/PlayerItemOperations.vue";
+import PlayerPalOperations from "@/components/PlayerPalOperations.vue";
 
 const { t, locale } = useI18n();
 const PALWORLD_TOKEN = "palworld_token";
@@ -651,6 +653,12 @@ const createPlayerItemsColumns = () => {
       <div class="mt-2">
         <n-tabs type="line" size="large" animated>
           <n-tab-pane :name="$t('item.palList')">
+            <player-pal-operations
+              v-if="isLogin"
+              class="mb-4"
+              :player-info="playerInfo"
+              :player-pals-list="playerPalsList"
+            />
             <div class="w-full mt-5">
               <n-input-group class="w-full flex justify-end">
                 <n-input
@@ -677,6 +685,11 @@ const createPlayerItemsColumns = () => {
             />
           </n-tab-pane>
           <n-tab-pane :name="$t('item.itemList')">
+            <player-item-operations
+              v-if="isLogin"
+              class="mb-4"
+              :player-info="playerInfo"
+            />
             <n-tabs type="segment" animated>
               <n-tab-pane :name="$t('item.commonContainer')">
                 <n-data-table
