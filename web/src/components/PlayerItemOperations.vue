@@ -6,6 +6,7 @@ import { useI18n } from "vue-i18n";
 import ApiService from "@/service/api";
 import userStore from "@/stores/model/user";
 import palItems from "@/assets/items.json";
+import { explainPalDefenderError, isPlayerOnlineForLiveGrant } from "@/utils/paldefender";
 
 const props = defineProps({
   playerInfo: {
@@ -28,7 +29,7 @@ const isPlayerOnline = computed(() => {
   if (!lastOnline) {
     return false;
   }
-  return dayjs().diff(dayjs(lastOnline)) < 80000;
+  return isPlayerOnlineForLiveGrant(lastOnline);
 });
 
 const itemAction = ref("grant");
@@ -167,7 +168,7 @@ const submitItemAction = async () => {
   }
   message.error(
     t("message.itemActionFail", {
-      err: data.value?.error || data.value?.message || "Unknown error",
+      err: explainPalDefenderError(t, data.value),
     })
   );
 };
@@ -199,7 +200,7 @@ const confirmClearInventory = () => {
       }
       message.error(
         t("message.clearInventoryFail", {
-          err: data.value?.error || data.value?.message || "Unknown error",
+          err: explainPalDefenderError(t, data.value),
         })
       );
     },

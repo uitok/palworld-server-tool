@@ -48,6 +48,14 @@ func InitDB() *bbolt.DB {
 	if err != nil {
 		logger.Panic(err)
 	}
+	// paldefender audit logs
+	err = db_.Update(func(tx *bbolt.Tx) error {
+		_, err := tx.CreateBucketIfNotExists([]byte("paldefender_audit_logs"))
+		return err
+	})
+	if err != nil {
+		logger.Panic(err)
+	}
 	return db_
 }
 

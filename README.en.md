@@ -329,6 +329,31 @@ paldefender:
   auth_key: ""
   # Request timeout in seconds, recommended <= 5
   timeout: 5
+  # Optional reusable presets for the control-center batch grant panel
+  presets:
+    - name: starter_pack
+      description: "Starter kit for new players"
+      grant:
+        exp: 5000
+        lifmunks: 5
+        technology_points: 3
+        items:
+          - item_id: PalSphere
+            amount: 20
+          - item_id: AncientCivilizationParts
+            amount: 10
+        pals:
+          - pal_id: Lamball
+            level: 5
+            amount: 1
+        pal_eggs:
+          - item_id: PalEgg_Normal_01
+            pal_id: Lamball
+            level: 1
+            amount: 1
+        pal_templates:
+          - template_name: starter_worker
+            amount: 1
 
 # Automation Config
 manage:
@@ -338,6 +363,7 @@ manage:
 
 > [!TIP]
 > If you want to use the live quick grant actions in the player detail panel and control center (items / Pals / eggs / templates / EXP / tech points), install and configure `PalDefender` on the game server first, then fill in `paldefender.enabled`, `paldefender.address`, and `paldefender.auth_key` correctly. These live actions require the target player to be online.
+> P0 / P1 now also adds PalDefender health checks, a batch grant panel, reusable presets, and recent audit logs. It is recommended to define at least one `paldefender.presets` entry for common reward packs.
 
 ##### Running
 

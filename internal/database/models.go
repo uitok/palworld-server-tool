@@ -118,3 +118,22 @@ type Backup struct {
 	SaveTime time.Time `json:"save_time"`
 	Path     string    `json:"path"`
 }
+
+type PalDefenderAuditLog struct {
+	ID                string    `json:"id"`
+	CreatedAt         time.Time `json:"created_at"`
+	Action            string    `json:"action"`
+	Source            string    `json:"source"`
+	Operator          string    `json:"operator"`
+	BatchID           string    `json:"batch_id,omitempty"`
+	PlayerUID         string    `json:"player_uid,omitempty"`
+	UserID            string    `json:"user_id,omitempty"`
+	SteamID           string    `json:"steam_id,omitempty"`
+	Nickname          string    `json:"nickname,omitempty"`
+	PresetNames       []string  `json:"preset_names,omitempty"`
+	Grant             any       `json:"grant,omitempty"`
+	Success           bool      `json:"success"`
+	Error             string    `json:"error,omitempty"`
+	ErrorCode         string    `json:"error_code,omitempty"`
+	PalDefenderErrors int       `json:"paldefender_errors,omitempty"`
+}

@@ -220,6 +220,7 @@ mkdir -p pst && tar -xzf pst_v0.10.0_linux_x86_64.tar.gz -C pst
 
 > [!TIP]
 > 若你希望在玩家详情和控制中心里使用“实时发物品 / 发帕鲁 / 发蛋 / 发模板 / 发经验与科技点”等快捷功能，请先在游戏服务器安装并配置 `PalDefender`，然后正确填写上面的 `paldefender.enabled`、`paldefender.address` 和 `paldefender.auth_key`。这类实时操作要求目标玩家在线。
+> P0 / P1 版本新增了 PalDefender 连接状态检测、批量发放面板、可复用预设，以及最近操作审计日志。建议至少配置一个 `paldefender.presets` 作为常用礼包模板。
 
 ##### 运行
 
@@ -352,6 +353,31 @@ paldefender:
   auth_key: ""
   # 通信超时时间，推荐 <= 5
   timeout: 5
+  # 控制中心“批量发放”与玩家详情操作面板可读取的常用预设
+  presets:
+    - name: starter_pack
+      description: "新玩家开荒礼包"
+      grant:
+        exp: 5000
+        lifmunks: 5
+        technology_points: 3
+        items:
+          - item_id: PalSphere
+            amount: 20
+          - item_id: AncientCivilizationParts
+            amount: 10
+        pals:
+          - pal_id: Lamball
+            level: 5
+            amount: 1
+        pal_eggs:
+          - item_id: PalEgg_Normal_01
+            pal_id: Lamball
+            level: 1
+            amount: 1
+        pal_templates:
+          - template_name: starter_worker
+            amount: 1
 
 # Automation Config 自动化管理相关
 manage:

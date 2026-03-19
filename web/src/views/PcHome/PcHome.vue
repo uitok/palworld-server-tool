@@ -37,6 +37,8 @@ import playerToGuildStore from "@/stores/model/playerToGuild";
 import { watch } from "vue";
 import userStore from "@/stores/model/user";
 import { h } from "vue";
+import PalDefenderBatchOperations from "@/components/PalDefenderBatchOperations.vue";
+import { explainPalDefenderError, isPlayerOnlineForLiveGrant } from "@/utils/paldefender";
 
 const { t, locale } = useI18n();
 
@@ -332,7 +334,7 @@ const ensureSelectedLiveGrantReady = () => {
   if (!playerPayload) {
     return null;
   }
-  if (!playerPayload.last_online || dayjs().diff(dayjs(playerPayload.last_online)) >= 80000) {
+  if (!isPlayerOnlineForLiveGrant(playerPayload.last_online)) {
     message.warning(t("message.playerMustBeOnline"));
     return null;
   }
@@ -360,7 +362,7 @@ const quickGiveItem = async () => {
     message.success(t("message.itemActionSuccess"));
     return;
   }
-  message.error(t("message.itemActionFail", { err: data.value?.error || data.value?.message || "Unknown error" }));
+  message.error(t("message.itemActionFail", { err: explainPalDefenderError(t, data.value) }));
 };
 const quickGivePal = async () => {
   const playerPayload = ensureSelectedLiveGrantReady();
@@ -381,7 +383,7 @@ const quickGivePal = async () => {
     message.success(t("message.palActionSuccess"));
     return;
   }
-  message.error(t("message.palActionFail", { err: data.value?.error || data.value?.message || "Unknown error" }));
+  message.error(t("message.palActionFail", { err: explainPalDefenderError(t, data.value) }));
 };
 const quickGiveEgg = async () => {
   const playerPayload = ensureSelectedLiveGrantReady();
@@ -407,7 +409,7 @@ const quickGiveEgg = async () => {
     message.success(t("message.palActionSuccess"));
     return;
   }
-  message.error(t("message.palActionFail", { err: data.value?.error || data.value?.message || "Unknown error" }));
+  message.error(t("message.palActionFail", { err: explainPalDefenderError(t, data.value) }));
 };
 const quickGrantByAmount = async (kind) => {
   const playerPayload = ensureSelectedLiveGrantReady();
@@ -423,7 +425,7 @@ const quickGrantByAmount = async (kind) => {
     message.success(t("message.palActionSuccess"));
     return;
   }
-  message.error(t("message.palActionFail", { err: data.value?.error || data.value?.message || "Unknown error" }));
+  message.error(t("message.palActionFail", { err: explainPalDefenderError(t, data.value) }));
 };
 const buildRconSelectionOptions = () => {
   const currentItems = itemMap[locale.value] || itemMap.zh || [];
@@ -1578,6 +1580,12 @@ onMounted(async () => {
           {{ $t("button.quickGiveBossTechPoints") }}
         </n-button>
       </div>
+
+      <pal-defender-batch-operations
+        v-if="isLogin"
+        :player-list="playerList"
+        :guild-list="guildList"
+      />
 
       <n-divider>{{ $t("button.rcon") }}</n-divider>
       <n-empty class="mt-3" v-if="rconCommands.length == 0"> </n-empty>

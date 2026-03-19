@@ -200,6 +200,7 @@ mkdir -p pst && tar -xzf pst_v0.10.0_linux_x86_64.tar.gz -C pst
 
 > [!TIP]
 > プレイヤー詳細やコントロールセンターでライブのクイック付与（アイテム / パル / 卵 / テンプレート / 経験値 / 技術ポイント）を使う場合は、先にゲームサーバーへ `PalDefender` を導入・設定し、`paldefender.enabled`、`paldefender.address`、`paldefender.auth_key` を正しく設定してください。これらのライブ操作では対象プレイヤーがオンラインである必要があります。
+> P0 / P1 では、PalDefender の接続確認・一括付与パネル・再利用プリセット・最近の監査ログも追加されました。よく使う報酬セットは `paldefender.presets` に定義しておくことをおすすめします。
 
 ##### 実行
 
@@ -332,6 +333,31 @@ paldefender:
   auth_key: ""
   # 通信タイムアウト（秒）、推奨 <= 5
   timeout: 5
+  # コントロールセンターの一括付与で使える再利用プリセット
+  presets:
+    - name: starter_pack
+      description: "新規プレイヤー向けスターターパック"
+      grant:
+        exp: 5000
+        lifmunks: 5
+        technology_points: 3
+        items:
+          - item_id: PalSphere
+            amount: 20
+          - item_id: AncientCivilizationParts
+            amount: 10
+        pals:
+          - pal_id: Lamball
+            level: 5
+            amount: 1
+        pal_eggs:
+          - item_id: PalEgg_Normal_01
+            pal_id: Lamball
+            level: 1
+            amount: 1
+        pal_templates:
+          - template_name: starter_worker
+            amount: 1
 
 # Automation Config 自動化管理関連
 manage:

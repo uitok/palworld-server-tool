@@ -24,6 +24,19 @@ class ApiService extends Service {
     return this.fetch(`/api/server/shutdown`).post(data).json();
   }
 
+  async getPalDefenderStatus() {
+    return this.fetch(`/api/server/paldefender/status`).get().json();
+  }
+
+  async getPalDefenderAuditLogs(param) {
+    const query = this.generateQuery(param);
+    return this.fetch(`/api/server/paldefender/audit?${query}`).get().json();
+  }
+
+  async grantPalDefenderBatch(param) {
+    return this.fetch(`/api/server/paldefender/grant-batch`).post(param).json();
+  }
+
   async getPlayerList(param) {
     const query = this.generateQuery(param);
     return this.fetch(`/api/player?${query}`).get().json();

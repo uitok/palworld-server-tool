@@ -7,6 +7,7 @@ import ApiService from "@/service/api";
 import userStore from "@/stores/model/user";
 import palMap from "@/assets/pal.json";
 import palItems from "@/assets/items.json";
+import { explainPalDefenderError, isPlayerOnlineForLiveGrant } from "@/utils/paldefender";
 
 const props = defineProps({
   playerInfo: {
@@ -33,7 +34,7 @@ const isPlayerOnline = computed(() => {
   if (!lastOnline) {
     return false;
   }
-  return dayjs().diff(dayjs(lastOnline)) < 80000;
+  return isPlayerOnlineForLiveGrant(lastOnline);
 });
 
 const grantPalId = ref(null);
@@ -213,7 +214,7 @@ const submitGrantPal = async () => {
   }
   message.error(
     t("message.palActionFail", {
-      err: data.value?.error || data.value?.message || "Unknown error",
+      err: explainPalDefenderError(t, data.value),
     })
   );
 };
@@ -242,7 +243,7 @@ const submitGrantTemplate = async () => {
   }
   message.error(
     t("message.palActionFail", {
-      err: data.value?.error || data.value?.message || "Unknown error",
+      err: explainPalDefenderError(t, data.value),
     })
   );
 };
@@ -277,7 +278,7 @@ const submitGrantEgg = async () => {
   }
   message.error(
     t("message.palActionFail", {
-      err: data.value?.error || data.value?.message || "Unknown error",
+      err: explainPalDefenderError(t, data.value),
     })
   );
 };
@@ -300,7 +301,7 @@ const submitExportPals = async () => {
   }
   message.error(
     t("message.exportPalsFail", {
-      err: data.value?.error || data.value?.message || "Unknown error",
+      err: explainPalDefenderError(t, data.value),
     })
   );
 };
@@ -336,7 +337,7 @@ const submitDeletePals = () => {
       }
       message.error(
         t("message.deletePalsFail", {
-          err: data.value?.error || data.value?.message || "Unknown error",
+          err: explainPalDefenderError(t, data.value),
         })
       );
     },

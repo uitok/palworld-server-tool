@@ -84,6 +84,9 @@ func RegisterRouter(r *gin.Engine) {
 	{
 		authGroup.POST("/server/broadcast", publishBroadcast)
 		authGroup.POST("/server/shutdown", shutdownServer)
+		authGroup.GET("/server/paldefender/status", getPalDefenderStatus)
+		authGroup.GET("/server/paldefender/audit", listPalDefenderAuditLogs)
+		authGroup.POST("/server/paldefender/grant-batch", grantPalDefenderBatch)
 		authGroup.PUT("/player", putPlayers)
 		authGroup.POST("/player/:player_uid/kick", kickPlayer)
 		authGroup.POST("/player/:player_uid/ban", banPlayer)
