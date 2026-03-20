@@ -56,6 +56,41 @@
 
 ![加QQ群](./docs/img/add_group.jpg)
 
+## 开发者入口
+
+如果你是准备参与二次开发、联调或继续推进本仓库路线图，建议先阅读以下文档：
+
+- 开发文档索引：`docs/development/README.md`
+- 统一开发路线图：`docs/development/unified-development-roadmap.zh-CN.md`
+- 阶段 0 基线：`docs/development/phase-0-baseline.zh-CN.md`
+
+推荐的开发启动入口：
+
+```bash
+# 1) 环境检查
+bash ./script/check-dev-env.sh
+
+# 2) 查看开发启动矩阵
+bash ./script/dev-start.sh matrix
+
+# 3) 启动主服务
+bash ./script/dev-start.sh backend
+```
+
+配置样例入口：
+
+- `example/README.zh-CN.md`
+- `example/config.dev.yaml`
+- `example/config.agent.yaml`
+- `example/config.docker.yaml`
+- `example/config.k8s.yaml`
+
+如果 `pal-conf` 子模块尚未初始化，请先执行：
+
+```bash
+git submodule update --init --recursive
+```
+
 ## 功能截图
 
 https://github.com/zaigie/palworld-server-tool/assets/17232619/afdf485c-4b34-491d-9c1f-1eb82e8060a1
