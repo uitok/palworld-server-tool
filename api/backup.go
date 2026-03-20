@@ -9,24 +9,11 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/zaigie/palworld-server-tool/internal/database"
+	"github.com/zaigie/palworld-server-tool/internal/logger"
 	"github.com/zaigie/palworld-server-tool/internal/tool"
 	"github.com/zaigie/palworld-server-tool/service"
 )
 
-// listBackups godoc
-//
-//	@Summary		List backups within a specified time range
-//	@Description	List all backups or backups within a specific time range.
-//	@Tags			backup
-//	@Accept			json
-//	@Produce		json
-//	@Security		ApiKeyAuth
-//	@Param			startTime	query		int	false	"Start time of the backup range in timestamp"
-//	@Param			endTime		query		int	false	"End time of the backup range in timestamp"
-//	@Success		200			{array}		database.Backup
-//	@Failure		400			{object}	ErrorResponse
-//	@Router			/api/backup [get]
 func listBackups(c *gin.Context) {
 	var startTimestamp, endTimestamp int64
 	var startTime, endTime time.Time
@@ -37,7 +24,7 @@ func listBackups(c *gin.Context) {
 	if startTimeStr != "" {
 		startTimestamp, err = strconv.ParseInt(startTimeStr, 10, 64)
 		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid start time"})
+			writeBadRequestCode(c, "invalid start time", "invalid_start_time")
 			return
 		}
 		startTime = time.Unix(0, startTimestamp*int64(time.Millisecond))
@@ -46,93 +33,100 @@ func listBackups(c *gin.Context) {
 	if endTimeStr != "" {
 		endTimestamp, err = strconv.ParseInt(endTimeStr, 10, 64)
 		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid end time"})
+			writeBadRequestCode(c, "invalid end time", "invalid_end_time")
 			return
 		}
 		endTime = time.Unix(0, endTimestamp*int64(time.Millisecond))
 	}
 
-	backups, err := service.ListBackups(database.GetDB(), startTime, endTime)
+	backups, err := service.ListBackups(getDB(), startTime, endTime)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		writeBadRequestErr(c, err)
 		return
 	}
 
 	c.JSON(http.StatusOK, backups)
 }
 
-// downloadBackup godoc
-//
-//	@Summary		Download Backup
-//	@Description	Download a backup
-//	@Tags			backup
-//	@Accept			json
-//	@Produce		application/octet-stream
-//	@Security		ApiKeyAuth
-//	@Param			backup_id	path		string	true	"Backup ID"
-//	@Success		200			{file}		"Backupfile"
-//	@Failure		400			{object}	ErrorResponse
-//	@Failure		404			{object}	ErrorResponse
-//	@Failure		500			{object}	ErrorResponse
-//	@Router			/api/backup/{backup_id} [get]
-func downloadBackup(c *gin.Context) {
-	backupId := c.Param("backup_id")
-	backup, err := service.GetBackup(database.GetDB(), backupId)
-	if err != nil {
-		if err == service.ErrNoRecord {
-			c.JSON(http.StatusNotFound, gin.H{})
-			return
-		}
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-
+func backupFilePath(fileName string) (string, error) {
 	backupDir, err := tool.GetBackupDir()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
+		return "", err
 	}
-	c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=%s", backup.Path))
-	c.File(filepath.Join(backupDir, backup.Path))
+	return filepath.Join(backupDir, fileName), nil
 }
 
-// deleteBackup godoc
-//
-//	@Summary		Delete Backup
-//	@Description	Delete a backup
-//	@Tags			backup
-//	@Accept			json
-//	@Produce		json
-//	@Security		ApiKeyAuth
-//	@Param			backup_id	path		string	true	"Backup ID"
-//	@Success		200			{object}	SuccessResponse
-//	@Failure		400			{object}	ErrorResponse
-//	@Router			/api/backup/{backup_id} [delete]
-func deleteBackup(c *gin.Context) {
-	backupId := c.Param("backup_id")
-	var backup database.Backup
-	backup, err := service.GetBackup(database.GetDB(), backupId)
+func removeStaleBackupRecord(backupID string) {
+	if err := service.DeleteBackup(getDB(), backupID); err != nil {
+		logger.Errorf("failed to remove stale backup record %s: %v\n", backupID, err)
+	}
+}
+
+func downloadBackup(c *gin.Context) {
+	backupID := c.Param("backup_id")
+	backup, err := service.GetBackup(getDB(), backupID)
 	if err != nil {
 		if err == service.ErrNoRecord {
-			c.JSON(http.StatusNotFound, gin.H{})
+			writeNotFound(c, "backup not found")
 			return
 		}
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		writeBadRequestErr(c, err)
 		return
 	}
-	if err := service.DeleteBackup(database.GetDB(), backupId); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-	backupDir, err := tool.GetBackupDir()
+
+	filePath, err := backupFilePath(backup.Path)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		writeInternalErrorErr(c, err)
 		return
 	}
-	err = os.Remove(filepath.Join(backupDir, backup.Path))
+	info, err := os.Stat(filePath)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		if os.IsNotExist(err) {
+			removeStaleBackupRecord(backupID)
+			writeError(c, http.StatusNotFound, "backup file is missing; stale record removed", "backup_file_missing", gin.H{"backup_id": backupID, "path": backup.Path}, 0)
+			return
+		}
+		writeInternalErrorErr(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"success": true})
+	if info.IsDir() {
+		writeInternalError(c, "backup path points to a directory")
+		return
+	}
+
+	c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=%s", backup.Path))
+	c.File(filePath)
+}
+
+func deleteBackup(c *gin.Context) {
+	backupID := c.Param("backup_id")
+	backup, err := service.GetBackup(getDB(), backupID)
+	if err != nil {
+		if err == service.ErrNoRecord {
+			writeNotFound(c, "backup not found")
+			return
+		}
+		writeBadRequestErr(c, err)
+		return
+	}
+
+	filePath, err := backupFilePath(backup.Path)
+	if err != nil {
+		writeInternalErrorErr(c, err)
+		return
+	}
+	removeErr := os.Remove(filePath)
+	if removeErr != nil && !os.IsNotExist(removeErr) {
+		writeInternalErrorErr(c, removeErr)
+		return
+	}
+	if err := service.DeleteBackup(getDB(), backupID); err != nil {
+		writeBadRequestErr(c, err)
+		return
+	}
+	if os.IsNotExist(removeErr) {
+		writeSuccessMessage(c, "backup record removed; backup file was already missing")
+		return
+	}
+	writeSuccess(c)
 }

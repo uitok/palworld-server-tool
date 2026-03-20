@@ -62,6 +62,12 @@ func CopyFromContainer(containerID, remotePath, way string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	cleanupTempDir := true
+	defer func() {
+		if cleanupTempDir {
+			_ = os.RemoveAll(tempDir)
+		}
+	}()
 
 	// 解压文件
 	err = system.UnTarGzDir(tarReader, tempDir)
@@ -70,6 +76,7 @@ func CopyFromContainer(containerID, remotePath, way string) (string, error) {
 	}
 
 	levelFilePath := filepath.Join(tempDir, "Level.sav")
+	cleanupTempDir = false
 	return levelFilePath, nil
 }
 
@@ -137,6 +144,10 @@ func ParseDockerAddress(address string) (containerID, filePath string, err error
 		return "", "", errors.New("invalid Docker address format")
 	}
 
-	containerID, filePath = parts[0], parts[1]
+	containerID = strings.TrimSpace(parts[0])
+	filePath = strings.TrimSpace(parts[1])
+	if containerID == "" || filePath == "" {
+		return "", "", errors.New("invalid Docker address format")
+	}
 	return containerID, filePath, nil
 }

@@ -26,17 +26,28 @@ const props = defineProps({
 const { t, locale } = useI18n();
 const message = useMessage();
 
+const activeTab = ref("grant");
 const status = ref(null);
 const loadingStatus = ref(false);
 const auditLogs = ref([]);
 const loadingAudit = ref(false);
 const submitting = ref(false);
+const exportingAudit = ref(false);
+const retryingBatch = ref(false);
 const selectedPresetNames = ref([]);
 const targetMode = ref("players");
 const selectedPlayerIds = ref([]);
 const selectedGuildAdminPlayerUid = ref(null);
 const onlineOnly = ref(true);
 const latestResult = ref(null);
+const auditFilters = reactive({
+  action: "",
+  batch_id: "",
+  player_uid: "",
+  success: "all",
+  error_code: "",
+  limit: 50,
+});
 
 const createEmptyGrantPlan = () => ({
   exp: null,
@@ -55,6 +66,97 @@ const createItemRow = () => ({ item_id: null, amount: 1 });
 const createPalRow = () => ({ pal_id: null, level: 1, amount: 1 });
 const createEggRow = () => ({ item_id: null, pal_id: null, level: 1, amount: 1 });
 const createTemplateRow = () => ({ template_name: "", amount: 1 });
+
+const auditTexts = computed(() => {
+  if (locale.value === "en") {
+    return {
+      actionAll: "All Actions",
+      actionBatchGrant: "Batch Grant",
+      actionBatchGrantRetry: "Batch Retry",
+      successAll: "All Results",
+      successOnly: "Success Only",
+      failedOnly: "Failed Only",
+      exportAudit: "Export Audit",
+      retryFailed: "Retry Failed",
+      batchIdPlaceholder: "Batch ID",
+      playerUidPlaceholder: "Player UID",
+      errorCodePlaceholder: "Error Code",
+      resetFilters: "Reset Filters",
+      latestBatchTitle: "Latest Batch Result",
+      sourceBatch: "Source Batch",
+      duration: "Duration",
+      completedAt: "Completed",
+      requestedTargets: "Requested",
+      appliedPresets: "Applied Presets",
+      failureCodes: "Failure Codes",
+      retryHint: "Retry target batch",
+      operator: "Operator",
+      grantSummary: "Grant Summary",
+      exportSuccess: "Audit logs exported",
+      exportFail: "Failed to export audit logs",
+      retryBatchMissing: "No retryable batch found yet",
+      retrySuccess: "Retry submitted for {count} player(s)",
+    };
+  }
+  if (locale.value === "ja") {
+    return {
+      actionAll: "全アクション",
+      actionBatchGrant: "一括付与",
+      actionBatchGrantRetry: "再試行",
+      successAll: "全結果",
+      successOnly: "成功のみ",
+      failedOnly: "失敗のみ",
+      exportAudit: "監査をエクスポート",
+      retryFailed: "失敗分を再試行",
+      batchIdPlaceholder: "バッチ ID",
+      playerUidPlaceholder: "Player UID",
+      errorCodePlaceholder: "エラーコード",
+      resetFilters: "フィルターをリセット",
+      latestBatchTitle: "最新バッチ結果",
+      sourceBatch: "元バッチ",
+      duration: "所要時間",
+      completedAt: "完了時刻",
+      requestedTargets: "要求対象数",
+      appliedPresets: "適用プリセット",
+      failureCodes: "失敗コード",
+      retryHint: "再試行対象バッチ",
+      operator: "操作者",
+      grantSummary: "付与概要",
+      exportSuccess: "監査ログをエクスポートしました",
+      exportFail: "監査ログのエクスポートに失敗しました",
+      retryBatchMissing: "再試行できるバッチがありません",
+      retrySuccess: "{count} 人に対する再試行を送信しました",
+    };
+  }
+  return {
+    actionAll: "全部动作",
+    actionBatchGrant: "批量发放",
+    actionBatchGrantRetry: "失败重试",
+    successAll: "全部结果",
+    successOnly: "仅成功",
+    failedOnly: "仅失败",
+    exportAudit: "导出审计",
+    retryFailed: "重试失败批次",
+    batchIdPlaceholder: "批次 ID",
+    playerUidPlaceholder: "玩家 UID",
+    errorCodePlaceholder: "错误码",
+    resetFilters: "重置筛选",
+    latestBatchTitle: "最近批次结果",
+    sourceBatch: "源批次",
+    duration: "耗时",
+    completedAt: "完成时间",
+    requestedTargets: "请求目标数",
+    appliedPresets: "已应用预设",
+    failureCodes: "失败码统计",
+    retryHint: "当前可重试批次",
+    operator: "操作人",
+    grantSummary: "发放摘要",
+    exportSuccess: "审计日志已导出",
+    exportFail: "导出审计日志失败",
+    retryBatchMissing: "当前没有可重试的失败批次",
+    retrySuccess: "已向 {count} 名玩家提交重试",
+  };
+});
 
 const itemCatalog = computed(() => palItems[locale.value] || palItems.zh || []);
 const itemOptions = computed(() =>
@@ -77,6 +179,18 @@ const palOptions = computed(() =>
     value: key,
   }))
 );
+
+const auditActionOptions = computed(() => [
+  { label: auditTexts.value.actionAll, value: "" },
+  { label: auditTexts.value.actionBatchGrant, value: "batch-grant" },
+  { label: auditTexts.value.actionBatchGrantRetry, value: "batch-grant-retry" },
+]);
+
+const auditSuccessOptions = computed(() => [
+  { label: auditTexts.value.successAll, value: "all" },
+  { label: auditTexts.value.successOnly, value: "success" },
+  { label: auditTexts.value.failedOnly, value: "failed" },
+]);
 
 const playerLookup = computed(() => {
   const lookup = new Map();
@@ -184,6 +298,21 @@ const statusLabel = computed(() => {
   return t("message.fail");
 });
 
+const normalizeText = (value) => String(value ?? "").trim();
+
+const retryBatchId = computed(() => {
+  const filteredBatchID = normalizeText(auditFilters.batch_id);
+  if (filteredBatchID) {
+    return filteredBatchID;
+  }
+  const latestBatchID = normalizeText(latestResult.value?.batch_id);
+  if (latestResult.value?.failure_count > 0 && latestBatchID) {
+    return latestBatchID;
+  }
+  const firstFailedLog = auditLogs.value.find((log) => !log.success && normalizeText(log.batch_id));
+  return normalizeText(firstFailedLog?.batch_id);
+});
+
 const getPositiveNumber = (value, allowZero = false) => {
   const parsed = Number.parseInt(String(value ?? 0), 10);
   if (!Number.isFinite(parsed)) {
@@ -199,6 +328,15 @@ const resetGrantPlan = () => {
   Object.assign(grantPlan, createEmptyGrantPlan());
   selectedPresetNames.value = [];
   latestResult.value = null;
+};
+
+const resetAuditFilters = () => {
+  auditFilters.action = "";
+  auditFilters.batch_id = "";
+  auditFilters.player_uid = "";
+  auditFilters.success = "all";
+  auditFilters.error_code = "";
+  auditFilters.limit = 50;
 };
 
 const buildGrantPayload = () => ({
@@ -232,6 +370,32 @@ const buildGrantPayload = () => ({
     })),
 });
 
+const buildAuditQuery = () => {
+  const query = { limit: auditFilters.limit };
+  const action = normalizeText(auditFilters.action);
+  const batchID = normalizeText(auditFilters.batch_id);
+  const playerUID = normalizeText(auditFilters.player_uid);
+  const errorCode = normalizeText(auditFilters.error_code);
+  if (action) {
+    query.action = action;
+  }
+  if (batchID) {
+    query.batch_id = batchID;
+  }
+  if (playerUID) {
+    query.player_uid = playerUID;
+  }
+  if (auditFilters.success === "success") {
+    query.success = true;
+  } else if (auditFilters.success === "failed") {
+    query.success = false;
+  }
+  if (errorCode) {
+    query.error_code = errorCode;
+  }
+  return query;
+};
+
 const loadStatus = async () => {
   loadingStatus.value = true;
   const { data, statusCode } = await new ApiService().getPalDefenderStatus();
@@ -245,7 +409,7 @@ const loadStatus = async () => {
 
 const loadAuditLogs = async () => {
   loadingAudit.value = true;
-  const { data, statusCode } = await new ApiService().getPalDefenderAuditLogs({ limit: 20 });
+  const { data, statusCode } = await new ApiService().getPalDefenderAuditLogs(buildAuditQuery());
   loadingAudit.value = false;
   if (statusCode.value === 200) {
     auditLogs.value = data.value || [];
@@ -254,13 +418,49 @@ const loadAuditLogs = async () => {
   message.error(explainPalDefenderError(t, data.value, t("message.fail")));
 };
 
+const applyBatchResult = async (payload, mode) => {
+  latestResult.value = payload;
+  activeTab.value = mode === "retry" ? "audit" : "grant";
+  if (payload?.failure_count > 0 && payload?.success_count > 0) {
+    message.warning(
+      t("message.batchGrantPartial", {
+        success: payload.success_count,
+        fail: payload.failure_count,
+      })
+    );
+  } else if (payload?.failure_count > 0) {
+    message.error(
+      t("message.batchGrantFail", {
+        err: payload?.results?.find((item) => item.error)?.error || t("message.fail"),
+      })
+    );
+  } else if (mode === "retry") {
+    message.success(
+      auditTexts.value.retrySuccess.replace("{count}", String(payload?.success_count || 0))
+    );
+  } else {
+    message.success(t("message.batchGrantSuccess", { count: payload?.success_count || 0 }));
+  }
+  await loadAuditLogs();
+};
+
 const submitBatchGrant = async () => {
   if (!resolvedTargets.value.length) {
     message.warning(t("message.batchTargetRequired"));
     return;
   }
   const grant = buildGrantPayload();
-  if (!selectedPresetNames.value.length && !grant.items.length && !grant.pals.length && !grant.pal_eggs.length && !grant.pal_templates.length && !grant.exp && !grant.lifmunks && !grant.technology_points && !grant.ancient_technology_points) {
+  if (
+    !selectedPresetNames.value.length &&
+    !grant.items.length &&
+    !grant.pals.length &&
+    !grant.pal_eggs.length &&
+    !grant.pal_templates.length &&
+    !grant.exp &&
+    !grant.lifmunks &&
+    !grant.technology_points &&
+    !grant.ancient_technology_points
+  ) {
     message.warning(t("message.noGrantPlanConfigured"));
     return;
   }
@@ -276,21 +476,98 @@ const submitBatchGrant = async () => {
   });
   submitting.value = false;
   if (statusCode.value === 200) {
-    latestResult.value = data.value;
-    if (data.value?.failure_count > 0 && data.value?.success_count > 0) {
-      message.warning(t("message.batchGrantPartial", {
-        success: data.value.success_count,
-        fail: data.value.failure_count,
-      }));
-    } else if (data.value?.failure_count > 0) {
-      message.error(t("message.batchGrantFail", { err: data.value?.results?.[0]?.error || t("message.fail") }));
-    } else {
-      message.success(t("message.batchGrantSuccess", { count: data.value?.success_count || 0 }));
-    }
-    await loadAuditLogs();
+    await applyBatchResult(data.value, "grant");
     return;
   }
   message.error(explainPalDefenderError(t, data.value, t("message.fail")));
+};
+
+const exportAuditLogs = async () => {
+  exportingAudit.value = true;
+  try {
+    const request = await new ApiService().exportPalDefenderAuditLogs(buildAuditQuery());
+    await request.execute();
+    if (request.statusCode.value === 200 && request.data.value) {
+      const url = URL.createObjectURL(request.data.value);
+      const link = document.createElement("a");
+      link.href = url;
+      link.setAttribute(
+        "download",
+        `paldefender-audit-${dayjs().format("YYYYMMDD-HHmmss")}.json`
+      );
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+      message.success(auditTexts.value.exportSuccess);
+      return;
+    }
+    message.error(auditTexts.value.exportFail);
+  } catch (error) {
+    console.error("PalDefender audit export failed", error);
+    message.error(auditTexts.value.exportFail);
+  } finally {
+    exportingAudit.value = false;
+  }
+};
+
+const retryFailedBatch = async () => {
+  if (!retryBatchId.value) {
+    message.warning(auditTexts.value.retryBatchMissing);
+    return;
+  }
+  retryingBatch.value = true;
+  const { data, statusCode } = await new ApiService().retryPalDefenderBatch({
+    batch_id: retryBatchId.value,
+    failed_only: true,
+  });
+  retryingBatch.value = false;
+  if (statusCode.value === 200) {
+    await applyBatchResult(data.value, "retry");
+    return;
+  }
+  message.error(explainPalDefenderError(t, data.value, t("message.fail")));
+};
+
+const formatFailureCodes = (failureCodes) => {
+  if (!failureCodes || typeof failureCodes !== "object") {
+    return "";
+  }
+  return Object.entries(failureCodes)
+    .map(([code, count]) => `${code || "unknown"} × ${count}`)
+    .join(", ");
+};
+
+const formatGrantSummary = (grant) => {
+  if (!grant || typeof grant !== "object") {
+    return "";
+  }
+  const summary = [];
+  if (Number(grant.exp || 0) > 0) {
+    summary.push(`EXP ${grant.exp}`);
+  }
+  if (Number(grant.lifmunks || 0) > 0) {
+    summary.push(`Lifmunks ${grant.lifmunks}`);
+  }
+  if (Number(grant.technology_points || 0) > 0) {
+    summary.push(`Tech ${grant.technology_points}`);
+  }
+  if (Number(grant.ancient_technology_points || 0) > 0) {
+    summary.push(`Ancient ${grant.ancient_technology_points}`);
+  }
+  if (Array.isArray(grant.items) && grant.items.length) {
+    summary.push(`Items ${grant.items.length}`);
+  }
+  if (Array.isArray(grant.pals) && grant.pals.length) {
+    summary.push(`Pals ${grant.pals.length}`);
+  }
+  if (Array.isArray(grant.pal_eggs) && grant.pal_eggs.length) {
+    summary.push(`Eggs ${grant.pal_eggs.length}`);
+  }
+  if (Array.isArray(grant.pal_templates) && grant.pal_templates.length) {
+    summary.push(`Templates ${grant.pal_templates.length}`);
+  }
+  return summary.join(" · ");
 };
 
 const formatAuditError = (log) => explainPalDefenderError(t, log, log?.error || t("message.success"));
@@ -306,12 +583,25 @@ onMounted(async () => {
       {{ $t("button.batchGrant") }}
     </template>
     <template #header-extra>
-      <n-space>
+      <n-space wrap>
         <n-button size="small" tertiary :loading="loadingStatus" @click="loadStatus">
           {{ $t("button.refreshStatus") }}
         </n-button>
         <n-button size="small" tertiary :loading="loadingAudit" @click="loadAuditLogs">
           {{ $t("button.refreshAudit") }}
+        </n-button>
+        <n-button size="small" tertiary :loading="exportingAudit" @click="exportAuditLogs">
+          {{ auditTexts.exportAudit }}
+        </n-button>
+        <n-button
+          size="small"
+          type="warning"
+          tertiary
+          :loading="retryingBatch"
+          :disabled="!retryBatchId"
+          @click="retryFailedBatch"
+        >
+          {{ auditTexts.retryFailed }}
         </n-button>
       </n-space>
     </template>
@@ -340,7 +630,7 @@ onMounted(async () => {
         </div>
       </n-alert>
 
-      <n-tabs type="line" animated>
+      <n-tabs v-model:value="activeTab" type="line" animated>
         <n-tab-pane name="grant" :tab="$t('button.batchGrant')">
           <n-space vertical size="small">
             <n-grid :cols="compact ? 1 : 2" :x-gap="12" :y-gap="12">
@@ -477,45 +767,107 @@ onMounted(async () => {
               </n-button>
             </n-space>
 
-            <n-alert v-if="latestResult" :type="latestResult.success ? 'success' : 'warning'" :show-icon="false">
-              <div class="flex gap-4 flex-wrap">
-                <span>{{ $t("item.targetCount") }}: {{ latestResult.target_count }}</span>
-                <span>{{ $t("item.successCount") }}: {{ latestResult.success_count }}</span>
-                <span>{{ $t("item.failureCount") }}: {{ latestResult.failure_count }}</span>
-              </div>
-            </n-alert>
+            <n-card v-if="latestResult" size="small" :title="auditTexts.latestBatchTitle">
+              <n-space vertical size="small">
+                <div class="flex items-center justify-between gap-2 flex-wrap">
+                  <n-space size="small" align="center">
+                    <n-tag :type="latestResult.success ? 'success' : 'warning'" round>
+                      {{ latestResult.success ? $t("message.success") : $t("message.fail") }}
+                    </n-tag>
+                    <n-tag size="small" type="info" round>{{ latestResult.batch_id }}</n-tag>
+                    <n-tag v-if="latestResult.source_batch_id" size="small" round>
+                      {{ auditTexts.sourceBatch }}: {{ latestResult.source_batch_id }}
+                    </n-tag>
+                  </n-space>
+                  <span class="text-xs opacity-75">
+                    {{ auditTexts.completedAt }}: {{ dayjs(latestResult.completed_at).format("YYYY-MM-DD HH:mm:ss") }}
+                  </span>
+                </div>
+                <div class="grid grid-cols-2 md:grid-cols-5 gap-2 text-sm">
+                  <div>{{ auditTexts.requestedTargets }}: {{ latestResult.requested_target_count }}</div>
+                  <div>{{ $t("item.targetCount") }}: {{ latestResult.target_count }}</div>
+                  <div>{{ $t("item.successCount") }}: {{ latestResult.success_count }}</div>
+                  <div>{{ $t("item.failureCount") }}: {{ latestResult.failure_count }}</div>
+                  <div>{{ auditTexts.duration }}: {{ latestResult.duration_ms || 0 }} ms</div>
+                </div>
+                <div v-if="latestResult.applied_preset_names?.length" class="text-xs opacity-75">
+                  {{ auditTexts.appliedPresets }}: {{ latestResult.applied_preset_names.join(", ") }}
+                </div>
+                <div v-if="formatFailureCodes(latestResult.failure_codes)" class="text-xs text-#d03050">
+                  {{ auditTexts.failureCodes }}: {{ formatFailureCodes(latestResult.failure_codes) }}
+                </div>
+              </n-space>
+            </n-card>
           </n-space>
         </n-tab-pane>
 
         <n-tab-pane name="audit" :tab="$t('item.auditLog')">
-          <n-empty v-if="!loadingAudit && auditLogs.length === 0" />
-          <n-spin v-else-if="loadingAudit" size="small" />
-          <n-list v-else hoverable>
-            <n-list-item v-for="log in auditLogs" :key="log.id">
-              <div class="flex items-center justify-between gap-3 flex-wrap">
-                <n-space size="small" align="center">
-                  <n-tag :type="log.success ? 'success' : 'error'" round>
-                    {{ log.success ? $t("message.success") : $t("message.fail") }}
-                  </n-tag>
-                  <n-tag size="small" round>{{ log.action }}</n-tag>
-                  <n-tag v-if="log.batch_id" size="small" round type="info">{{ log.batch_id }}</n-tag>
-                </n-space>
-                <span class="text-xs opacity-75">{{ dayjs(log.created_at).format("YYYY-MM-DD HH:mm:ss") }}</span>
-              </div>
-              <div class="mt-2 text-sm">
-                {{ log.nickname || log.player_uid || log.user_id || "-" }}
-              </div>
-              <div class="mt-1 text-xs opacity-75">
-                UID: {{ log.player_uid || "-" }} | UserID: {{ log.user_id || "-" }}
-              </div>
-              <div v-if="log.preset_names?.length" class="mt-1 text-xs opacity-75">
-                Presets: {{ log.preset_names.join(", ") }}
-              </div>
-              <div v-if="log.error" class="mt-2 text-xs text-#d03050">
-                {{ formatAuditError(log) }}
-              </div>
-            </n-list-item>
-          </n-list>
+          <n-space vertical size="small">
+            <n-grid :cols="compact ? 1 : 5" :x-gap="12" :y-gap="12">
+              <n-gi>
+                <n-select v-model:value="auditFilters.action" :options="auditActionOptions" :placeholder="auditTexts.actionAll" />
+              </n-gi>
+              <n-gi>
+                <n-input v-model:value="auditFilters.batch_id" :placeholder="auditTexts.batchIdPlaceholder" @keyup.enter="loadAuditLogs" />
+              </n-gi>
+              <n-gi>
+                <n-input v-model:value="auditFilters.player_uid" :placeholder="auditTexts.playerUidPlaceholder" @keyup.enter="loadAuditLogs" />
+              </n-gi>
+              <n-gi>
+                <n-select v-model:value="auditFilters.success" :options="auditSuccessOptions" />
+              </n-gi>
+              <n-gi>
+                <n-input v-model:value="auditFilters.error_code" :placeholder="auditTexts.errorCodePlaceholder" @keyup.enter="loadAuditLogs" />
+              </n-gi>
+            </n-grid>
+
+            <div class="flex items-center justify-between gap-3 flex-wrap">
+              <n-text depth="3">{{ auditTexts.retryHint }}: {{ retryBatchId || "-" }}</n-text>
+              <n-space>
+                <n-button tertiary @click="resetAuditFilters">{{ auditTexts.resetFilters }}</n-button>
+                <n-button tertiary :loading="loadingAudit" @click="loadAuditLogs">{{ $t("button.search") }}</n-button>
+                <n-button tertiary :loading="exportingAudit" @click="exportAuditLogs">{{ auditTexts.exportAudit }}</n-button>
+                <n-button type="warning" tertiary :loading="retryingBatch" :disabled="!retryBatchId" @click="retryFailedBatch">
+                  {{ auditTexts.retryFailed }}
+                </n-button>
+              </n-space>
+            </div>
+
+            <n-empty v-if="!loadingAudit && auditLogs.length === 0" />
+            <n-spin v-else-if="loadingAudit" size="small" />
+            <n-list v-else hoverable>
+              <n-list-item v-for="log in auditLogs" :key="log.id">
+                <div class="flex items-center justify-between gap-3 flex-wrap">
+                  <n-space size="small" align="center">
+                    <n-tag :type="log.success ? 'success' : 'error'" round>
+                      {{ log.success ? $t("message.success") : $t("message.fail") }}
+                    </n-tag>
+                    <n-tag size="small" round>{{ log.action }}</n-tag>
+                    <n-tag v-if="log.batch_id" size="small" round type="info">{{ log.batch_id }}</n-tag>
+                  </n-space>
+                  <span class="text-xs opacity-75">{{ dayjs(log.created_at).format("YYYY-MM-DD HH:mm:ss") }}</span>
+                </div>
+                <div class="mt-2 text-sm">
+                  {{ log.nickname || log.player_uid || log.user_id || "-" }}
+                </div>
+                <div class="mt-1 text-xs opacity-75">
+                  UID: {{ log.player_uid || "-" }} | UserID: {{ log.user_id || "-" }} | {{ auditTexts.operator }}: {{ log.operator || "-" }}
+                </div>
+                <div v-if="log.preset_names?.length" class="mt-1 text-xs opacity-75">
+                  {{ auditTexts.appliedPresets }}: {{ log.preset_names.join(", ") }}
+                </div>
+                <div v-if="formatGrantSummary(log.grant)" class="mt-1 text-xs opacity-75">
+                  {{ auditTexts.grantSummary }}: {{ formatGrantSummary(log.grant) }}
+                </div>
+                <div v-if="log.error_code" class="mt-1 text-xs opacity-75">
+                  {{ auditTexts.failureCodes }}: {{ log.error_code }}
+                </div>
+                <div v-if="log.error" class="mt-2 text-xs text-#d03050">
+                  {{ formatAuditError(log) }}
+                </div>
+              </n-list-item>
+            </n-list>
+          </n-space>
         </n-tab-pane>
       </n-tabs>
     </n-space>

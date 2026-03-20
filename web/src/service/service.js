@@ -39,13 +39,16 @@ class Service {
    * @param {Object} credential - The credential object.
    * @return {string} - The generated query string.
    */
-  generateQuery(credential) {
-    const entries = Object.entries(credential);
+  generateQuery(credential = {}) {
+    const entries = Object.entries(credential || {});
     return entries
       .reduce((accumulation, [key, value]) => {
-        if (value) {
-          accumulation.push(`${key}=${value}`);
+        if (value === undefined || value === null || value === "") {
+          return accumulation;
         }
+        accumulation.push(
+          `${encodeURIComponent(key)}=${encodeURIComponent(String(value))}`
+        );
         return accumulation;
       }, [])
       .join("&");

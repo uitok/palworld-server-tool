@@ -81,6 +81,26 @@ const getSkillTypeList = () => {
   return Object.values(currentSkillMap).map((item) => item.name);
 };
 
+const toOpsOverview = () => {
+  window.location.href = "/ops";
+};
+
+const toPlayersOverview = () => {
+  window.location.href = "/players";
+};
+
+const getOpsOverviewLabel = () => {
+  if (locale.value === "en") return "Ops Overview";
+  if (locale.value === "ja") return "運用ダッシュボード";
+  return "运维总览";
+};
+
+const getPlayersOverviewLabel = () => {
+  if (locale.value === "en") return "Player Workspace";
+  if (locale.value === "ja") return "プレイヤーワークスペース";
+  return "玩家工作台";
+};
+
 // get data
 const getServerInfo = async () => {
   const { data, statusCode } = await new ApiService().getServerInfo();
@@ -444,11 +464,40 @@ onMounted(async () => {
             :class="isLogin ? 'h-16' : 'h-10'"
             bordered
           >
-            <div v-if="isLogin" class="flex justify-center items-center px-3">
+            <div v-if="isLogin" class="flex justify-center items-center px-3 gap-2 flex-wrap">
+              <n-button
+                size="small"
+                type="primary"
+                secondary
+                strong
+                round
+                @click="toOpsOverview"
+              >
+                <template #icon>
+                  <n-icon>
+                    <AdminPanelSettingsOutlined />
+                  </n-icon>
+                </template>
+                {{ getOpsOverviewLabel() }}
+              </n-button>
+              <n-button
+                size="small"
+                type="info"
+                secondary
+                strong
+                round
+                @click="toPlayersOverview"
+              >
+                <template #icon>
+                  <n-icon>
+                    <SupervisedUserCircleRound />
+                  </n-icon>
+                </template>
+                {{ getPlayersOverviewLabel() }}
+              </n-button>
               <n-button
                 size="small"
                 type="success"
-                class="mr-2"
                 secondary
                 strong
                 round

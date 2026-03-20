@@ -24,55 +24,108 @@ import (
 var s gocron.Scheduler
 var schedulerOnce sync.Once
 
-func BackupTask(db *bbolt.DB) {
-	logger.Info("Scheduling backup...\n")
+func doBackup(db *bbolt.DB) (database.Backup, string, error) {
 	path, err := tool.Backup()
 	if err != nil {
-		logger.Errorf("%v\n", err)
-		return
+		code := tool.SaveOperationErrorCode(err)
+		if code == "" {
+			code = "backup_failed"
+		}
+		return database.Backup{}, code, err
 	}
-	err = service.AddBackup(db, database.Backup{
+
+	backupRecord := database.Backup{
 		BackupId: uuid.New().String(),
 		Path:     path,
 		SaveTime: time.Now(),
-	})
-	if err != nil {
-		logger.Errorf("%v\n", err)
-		return
 	}
-	logger.Infof("Auto backup to %s\n", path)
+	if err := service.AddBackup(db, backupRecord); err != nil {
+		if backupDir, dirErr := tool.GetBackupDir(); dirErr != nil {
+			logger.Errorf("failed to resolve backup directory for cleanup: %v\n", dirErr)
+		} else if removeErr := os.Remove(filepath.Join(backupDir, path)); removeErr != nil && !os.IsNotExist(removeErr) {
+			logger.Errorf("failed to clean orphan backup archive %s: %v\n", path, removeErr)
+		}
+		return database.Backup{}, "backup_record_store_failed", err
+	}
 
 	keepDays := viper.GetInt("save.backup_keep_days")
 	if keepDays == 0 {
 		keepDays = 7
 	}
-	err = tool.CleanOldBackups(db, keepDays)
-	if err != nil {
-		logger.Errorf("Failed to clean old backups: %v\n", err)
+	if err := tool.CleanOldBackups(db, keepDays); err != nil {
+		return database.Backup{}, "backup_cleanup_failed", err
 	}
+	return backupRecord, "", nil
+}
+
+func runBackup(db *bbolt.DB) (database.Backup, int64, string, error) {
+	startedAt := markTaskStart(TaskBackup)
+	logger.Infof("task=%s started interval_seconds=%d\n", TaskBackup, viper.GetInt("save.backup_interval"))
+
+	backupRecord, code, err := doBackup(db)
+	if err != nil {
+		durationMs := markTaskFailure(TaskBackup, startedAt, err, code)
+		logger.Errorf("task=%s failed duration_ms=%d code=%s err=%v\n", TaskBackup, durationMs, code, err)
+		return database.Backup{}, durationMs, code, err
+	}
+
+	keepDays := viper.GetInt("save.backup_keep_days")
+	if keepDays == 0 {
+		keepDays = 7
+	}
+	durationMs := markTaskSuccess(TaskBackup, startedAt)
+	logger.Infof("task=%s completed duration_ms=%d backup=%s keep_days=%d\n", TaskBackup, durationMs, backupRecord.Path, keepDays)
+	return backupRecord, durationMs, "", nil
+}
+
+func RunBackupNow(db *bbolt.DB) (database.Backup, int64, string, error) {
+	return runBackup(db)
+}
+
+func BackupTask(db *bbolt.DB) {
+	_, _, _, _ = runBackup(db)
+}
+
+func doPlayerSync(db *bbolt.DB) (int, string, error) {
+	onlinePlayers, err := tool.ShowPlayers()
+	if err != nil {
+		return 0, "player_sync_fetch_failed", err
+	}
+	if err := service.PutPlayersOnline(db, onlinePlayers); err != nil {
+		return 0, "player_sync_store_failed", err
+	}
+
+	if viper.GetBool("task.player_logging") {
+		go PlayerLogging(onlinePlayers)
+	}
+	if viper.GetBool("manage.kick_non_whitelist") {
+		go CheckAndKickPlayers(db, onlinePlayers)
+	}
+	return len(onlinePlayers), "", nil
+}
+
+func runPlayerSync(db *bbolt.DB) (int, int64, string, error) {
+	startedAt := markTaskStart(TaskPlayerSync)
+	logger.Infof("task=%s started interval_seconds=%d\n", TaskPlayerSync, viper.GetInt("task.sync_interval"))
+
+	onlineCount, code, err := doPlayerSync(db)
+	if err != nil {
+		durationMs := markTaskFailure(TaskPlayerSync, startedAt, err, code)
+		logger.Errorf("task=%s failed duration_ms=%d code=%s err=%v\n", TaskPlayerSync, durationMs, code, err)
+		return 0, durationMs, code, err
+	}
+
+	durationMs := markTaskSuccess(TaskPlayerSync, startedAt)
+	logger.Infof("task=%s completed duration_ms=%d online_players=%d\n", TaskPlayerSync, durationMs, onlineCount)
+	return onlineCount, durationMs, "", nil
+}
+
+func RunPlayerSyncNow(db *bbolt.DB) (int, int64, string, error) {
+	return runPlayerSync(db)
 }
 
 func PlayerSync(db *bbolt.DB) {
-	logger.Info("Scheduling Player sync...\n")
-	onlinePlayers, err := tool.ShowPlayers()
-	if err != nil {
-		logger.Errorf("%v\n", err)
-	}
-	err = service.PutPlayersOnline(db, onlinePlayers)
-	if err != nil {
-		logger.Errorf("%v\n", err)
-	}
-	logger.Info("Player sync done\n")
-
-	playerLogging := viper.GetBool("task.player_logging")
-	if playerLogging {
-		go PlayerLogging(onlinePlayers)
-	}
-
-	kickInterval := viper.GetBool("manage.kick_non_whitelist")
-	if kickInterval {
-		go CheckAndKickPlayers(db, onlinePlayers)
-	}
+	_, _, _, _ = runPlayerSync(db)
 }
 
 func isPlayerWhitelisted(player database.OnlinePlayer, whitelist []database.PlayerW) bool {
@@ -123,7 +176,6 @@ func BroadcastVariableMessage(message string, username string, onlineNum int) {
 		if err != nil {
 			logger.Warnf("Broadcast fail, %s \n", err)
 		}
-		// 连续发送不知道为啥行会错乱, 只能加点延迟
 		time.Sleep(1000 * time.Millisecond)
 	}
 }
@@ -151,13 +203,56 @@ func CheckAndKickPlayers(db *bbolt.DB, players []database.OnlinePlayer) {
 	logger.Info("Check whitelist done\n")
 }
 
-func SavSync() {
-	logger.Info("Scheduling Sav sync...\n")
+func doSaveSync() (string, error) {
 	err := tool.Decode(viper.GetString("save.path"))
 	if err != nil {
-		logger.Errorf("%v\n", err)
+		code := tool.SaveOperationErrorCode(err)
+		if code == "" {
+			code = "save_sync_failed"
+		}
+		return code, err
 	}
-	logger.Info("Sav sync done\n")
+	return "", nil
+}
+
+func runSaveSync() (int64, string, error) {
+	startedAt := markTaskStart(TaskSaveSync)
+	logger.Infof("task=%s started interval_seconds=%d\n", TaskSaveSync, viper.GetInt("save.sync_interval"))
+
+	code, err := doSaveSync()
+	if err != nil {
+		durationMs := markTaskFailure(TaskSaveSync, startedAt, err, code)
+		logger.Errorf("task=%s failed duration_ms=%d code=%s err=%v\n", TaskSaveSync, durationMs, code, err)
+		return durationMs, code, err
+	}
+
+	durationMs := markTaskSuccess(TaskSaveSync, startedAt)
+	logger.Infof("task=%s completed duration_ms=%d\n", TaskSaveSync, durationMs)
+	return durationMs, "", nil
+}
+
+func RunSaveSyncNow() (int64, string, error) {
+	return runSaveSync()
+}
+
+func SavSync() {
+	_, _, _ = runSaveSync()
+}
+
+func CacheCleanupTask() {
+	startedAt := markTaskStart(TaskCacheCleanup)
+	logger.Infof("task=%s started interval_seconds=%d\n", TaskCacheCleanup, 300)
+
+	err := system.LimitCacheDir(filepath.Join(os.TempDir(), "palworldsav-"), 5)
+	if err != nil {
+		const code = "cache_cleanup_failed"
+		durationMs := markTaskFailure(TaskCacheCleanup, startedAt, err, code)
+		logger.Errorf("task=%s failed duration_ms=%d code=%s err=%v\n", TaskCacheCleanup, durationMs, code, err)
+		return
+	}
+
+	durationMs := markTaskSuccess(TaskCacheCleanup, startedAt)
+	logger.Infof("task=%s completed duration_ms=%d\n", TaskCacheCleanup, durationMs)
 }
 
 func Schedule(db *bbolt.DB) {
@@ -166,6 +261,7 @@ func Schedule(db *bbolt.DB) {
 	playerSyncInterval := time.Duration(viper.GetInt("task.sync_interval"))
 	savSyncInterval := time.Duration(viper.GetInt("save.sync_interval"))
 	backupInterval := time.Duration(viper.GetInt("save.backup_interval"))
+	logger.Infof("Scheduler config: player_sync=%ds save_sync=%ds backup=%ds cache_cleanup=%ds\n", int(playerSyncInterval), int(savSyncInterval), int(backupInterval), 300)
 
 	if playerSyncInterval > 0 {
 		go PlayerSync(db)
@@ -202,7 +298,7 @@ func Schedule(db *bbolt.DB) {
 
 	_, err := s.NewJob(
 		gocron.DurationJob(300*time.Second),
-		gocron.NewTask(system.LimitCacheDir, filepath.Join(os.TempDir(), "palworldsav-"), 5),
+		gocron.NewTask(CacheCleanupTask),
 	)
 	if err != nil {
 		logger.Errorf("%v\n", err)

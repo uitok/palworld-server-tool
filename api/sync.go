@@ -1,10 +1,7 @@
 package api
 
 import (
-	"net/http"
-
 	"github.com/gin-gonic/gin"
-	"github.com/zaigie/palworld-server-tool/internal/database"
 	"github.com/zaigie/palworld-server-tool/internal/task"
 )
 
@@ -25,19 +22,35 @@ const (
 //	@Security		ApiKeyAuth
 //	@Param			from	query		From	true	"from"	enum(rest,sav)
 //
-//	@Success		200		{object}	SuccessResponse
+//	@Success		200		{object}	ServerOperationResponse
+//	@Failure		400		{object}	ErrorResponse
 //	@Failure		401		{object}	ErrorResponse
 //	@Router			/api/sync [post]
 func syncData(c *gin.Context) {
 	from := c.Query("from")
-	if from == "rest" {
-		go task.PlayerSync(database.GetDB())
-		c.JSON(http.StatusOK, gin.H{"success": true})
-		return
-	} else if from == "sav" {
-		go task.SavSync()
-		c.JSON(http.StatusOK, gin.H{"success": true})
-		return
+	if from == "" {
+		var req SyncRequest
+		if err := c.ShouldBindJSON(&req); err == nil {
+			from = string(req.From)
+		}
 	}
-	c.JSON(http.StatusOK, gin.H{"error": "invalid from"})
+
+	switch From(from) {
+	case FromRest:
+		onlinePlayers, durationMs, code, err := runPlayerSyncNowFunc(getDB())
+		if err != nil {
+			writeOperationErr(c, code, err)
+			return
+		}
+		writeOperationSuccess(c, "sync", task.TaskPlayerSync, string(FromRest), "player sync completed", durationMs, gin.H{"online_players": onlinePlayers})
+	case FromSav:
+		durationMs, code, err := runSaveSyncNowFunc()
+		if err != nil {
+			writeOperationErr(c, code, err)
+			return
+		}
+		writeOperationSuccess(c, "sync", task.TaskSaveSync, string(FromSav), "save sync completed", durationMs, nil)
+	default:
+		writeBadRequestCode(c, "invalid from", "invalid_sync_source")
+	}
 }

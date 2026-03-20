@@ -1,6 +1,7 @@
 package source
 
 import (
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -18,6 +19,12 @@ func DownloadFromHttp(url, way string) (string, error) {
 		return "", err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		if resp.StatusCode == http.StatusNotFound {
+			return "", fmt.Errorf("unexpected http status %d: %w", resp.StatusCode, os.ErrNotExist)
+		}
+		return "", fmt.Errorf("unexpected http status %d", resp.StatusCode)
+	}
 
 	uuid := uuid.New().String()
 	tempPath := filepath.Join(os.TempDir(), "palworldsav-http-"+way+"-"+uuid)
@@ -25,10 +32,15 @@ func DownloadFromHttp(url, way string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-
 	if err = system.CleanAndCreateDir(absPath); err != nil {
 		return "", err
 	}
+	cleanupTempDir := true
+	defer func() {
+		if cleanupTempDir {
+			_ = os.RemoveAll(absPath)
+		}
+	}()
 
 	tempZipFilePath := filepath.Join(absPath, "sav.zip")
 	defer os.Remove(tempZipFilePath)
@@ -38,17 +50,18 @@ func DownloadFromHttp(url, way string) (string, error) {
 		return "", err
 	}
 	defer zipOut.Close()
-
-	_, err = io.Copy(zipOut, resp.Body)
-	if err != nil {
+	if _, err = io.Copy(zipOut, resp.Body); err != nil {
 		return "", err
 	}
 
-	err = system.UnzipDir(tempZipFilePath, absPath)
+	if err = system.UnzipDir(tempZipFilePath, absPath); err != nil {
+		return "", err
+	}
+	levelFilePath, err := system.GetLevelSavFilePath(absPath)
 	if err != nil {
 		return "", err
 	}
-	levelFilePath := filepath.Join(absPath, "Level.sav")
 	logger.Info("sav.zip downloaded and extracted\n")
+	cleanupTempDir = false
 	return levelFilePath, nil
 }

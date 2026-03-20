@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -18,6 +19,11 @@ type palDefenderBatchGrantRequest struct {
 	Targets     []playerActionTarget      `json:"targets"`
 	PresetNames []string                  `json:"preset_names"`
 	Grant       tool.PalDefenderGrantPlan `json:"grant"`
+}
+
+type palDefenderBatchRetryRequest struct {
+	BatchID    string `json:"batch_id"`
+	FailedOnly *bool  `json:"failed_only"`
 }
 
 type palDefenderResolvedTarget struct {
@@ -38,36 +44,44 @@ type palDefenderBatchGrantResult struct {
 }
 
 type palDefenderBatchGrantResponse struct {
-	Success            bool                          `json:"success"`
-	BatchID            string                        `json:"batch_id"`
-	TargetCount        int                           `json:"target_count"`
-	SuccessCount       int                           `json:"success_count"`
-	FailureCount       int                           `json:"failure_count"`
-	AppliedPresetNames []string                      `json:"applied_preset_names,omitempty"`
-	Results            []palDefenderBatchGrantResult `json:"results"`
+	Success              bool                          `json:"success"`
+	BatchID              string                        `json:"batch_id"`
+	SourceBatchID        string                        `json:"source_batch_id,omitempty"`
+	RequestedTargetCount int                           `json:"requested_target_count"`
+	TargetCount          int                           `json:"target_count"`
+	SuccessCount         int                           `json:"success_count"`
+	FailureCount         int                           `json:"failure_count"`
+	FailureCodes         map[string]int                `json:"failure_codes,omitempty"`
+	AppliedPresetNames   []string                      `json:"applied_preset_names,omitempty"`
+	CompletedAt          time.Time                     `json:"completed_at"`
+	DurationMs           int64                         `json:"duration_ms"`
+	Results              []palDefenderBatchGrantResult `json:"results"`
 }
+
+var (
+	palDefenderGiveFunc           = tool.PalDefenderGive
+	palDefenderDeleteItemFunc     = tool.PalDefenderDeleteItem
+	palDefenderClearInventoryFunc = tool.PalDefenderClearInventory
+	palDefenderExportPalsFunc     = tool.PalDefenderExportPals
+	palDefenderDeletePalsFunc     = tool.PalDefenderDeletePals
+)
 
 func writePlayerActionError(c *gin.Context, err error) {
 	status := http.StatusBadRequest
 	if strings.EqualFold(err.Error(), "Player not found") {
 		status = http.StatusNotFound
 	}
-	c.JSON(status, gin.H{
-		"error":      err.Error(),
-		"error_code": tool.PalDefenderErrorCode(err),
-	})
+	writeError(c, status, err.Error(), tool.PalDefenderErrorCode(err), nil, 0)
 }
 
 func writePalDefenderError(c *gin.Context, err error) {
-	payload := gin.H{
-		"error":      err.Error(),
-		"error_code": tool.PalDefenderErrorCode(err),
-	}
+	errorsCount := 0
+	var details any
 	if pdErr, ok := err.(*tool.PalDefenderAPIError); ok {
-		payload["errors"] = pdErr.Response.Errors
-		payload["detail"] = pdErr.Response.Error
+		errorsCount = pdErr.Response.Errors
+		details = pdErr.Response.Error
 	}
-	c.JSON(http.StatusBadRequest, payload)
+	writeBadRequestDetails(c, err.Error(), tool.PalDefenderErrorCode(err), details, errorsCount)
 }
 
 func resolveBatchGrantTargets(targets []playerActionTarget) ([]palDefenderResolvedTarget, error) {
@@ -90,7 +104,7 @@ func resolveBatchGrantTargets(targets []playerActionTarget) ([]palDefenderResolv
 			UserID:    strings.TrimSpace(target.UserID),
 			SteamID:   strings.TrimSpace(target.SteamID),
 		}}
-		player, err := service.GetPlayer(database.GetDB(), playerUID)
+		player, err := service.GetPlayer(getDB(), playerUID)
 		if err == nil {
 			if resolvedTarget.UserID == "" {
 				resolvedTarget.UserID = player.UserId
@@ -108,12 +122,12 @@ func resolveBatchGrantTargets(targets []playerActionTarget) ([]palDefenderResolv
 	return resolved, nil
 }
 
-func recordPalDefenderAuditLog(c *gin.Context, action string, batchID string, target playerActionTarget, nickname string, presetNames []string, grant any, response tool.PalDefenderAPIResponse, err error) {
+func recordPalDefenderAuditLogWithDetails(c *gin.Context, action string, batchID string, target playerActionTarget, nickname string, presetNames []string, grant any, details any, result any, response tool.PalDefenderAPIResponse, err error) {
 	playerUID := strings.TrimSpace(target.PlayerUID)
 	userID := strings.TrimSpace(target.UserID)
-	steamID := strings.TrimSpace(target.SteamID)
+	steamID := normalizePlayerActionSteamID(target.SteamID)
 	if playerUID != "" {
-		if player, lookupErr := service.GetPlayer(database.GetDB(), playerUID); lookupErr == nil {
+		if player, lookupErr := service.GetPlayer(getDB(), playerUID); lookupErr == nil {
 			if strings.TrimSpace(nickname) == "" {
 				nickname = player.Nickname
 			}
@@ -121,7 +135,7 @@ func recordPalDefenderAuditLog(c *gin.Context, action string, batchID string, ta
 				userID = player.UserId
 			}
 			if steamID == "" {
-				steamID = player.SteamId
+				steamID = normalizePlayerActionSteamID(player.SteamId)
 			}
 		}
 	}
@@ -136,6 +150,8 @@ func recordPalDefenderAuditLog(c *gin.Context, action string, batchID string, ta
 		Nickname:    nickname,
 		PresetNames: append([]string(nil), presetNames...),
 		Grant:       grant,
+		Details:     details,
+		Result:      result,
 		Success:     err == nil,
 	}
 	if err != nil {
@@ -145,63 +161,98 @@ func recordPalDefenderAuditLog(c *gin.Context, action string, batchID string, ta
 	if response.Errors > 0 {
 		log.PalDefenderErrors = response.Errors
 	}
-	if saveErr := service.AddPalDefenderAuditLog(database.GetDB(), log); saveErr != nil {
+	if saveErr := service.AddPalDefenderAuditLog(getDB(), log); saveErr != nil {
 		logger.Errorf("save paldefender audit log failed: %v\n", saveErr)
 	}
+}
+
+func recordPalDefenderAuditLog(c *gin.Context, action string, batchID string, target playerActionTarget, nickname string, presetNames []string, grant any, response tool.PalDefenderAPIResponse, err error) {
+	recordPalDefenderAuditLogWithDetails(c, action, batchID, target, nickname, presetNames, grant, nil, nil, response, err)
+}
+
+func recordPalDefenderCommandAudit(c *gin.Context, action string, target playerActionTarget, details any, result any, err error) {
+	response := tool.PalDefenderAPIResponse{}
+	if pdErr, ok := err.(*tool.PalDefenderAPIError); ok {
+		response = pdErr.Response
+		if details == nil && pdErr.Response.Error != nil {
+			details = pdErr.Response.Error
+		}
+	}
+	recordPalDefenderAuditLogWithDetails(c, action, "", target, "", nil, nil, details, result, response, err)
+}
+
+func incrementFailureCode(summary map[string]int, code string) {
+	code = strings.TrimSpace(code)
+	if code == "" {
+		code = "unknown_error"
+	}
+	summary[code]++
 }
 
 func getPalDefenderStatus(c *gin.Context) {
 	c.JSON(http.StatusOK, tool.PalDefenderStatusSnapshot())
 }
 
-func listPalDefenderAuditLogs(c *gin.Context) {
-	limit, err := strconv.Atoi(strings.TrimSpace(c.DefaultQuery("limit", "20")))
+func parseAuditSuccessFilter(value string) *bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "true", "1", "success", "ok":
+		result := true
+		return &result
+	case "false", "0", "fail", "failed", "error":
+		result := false
+		return &result
+	default:
+		return nil
+	}
+}
+
+func buildPalDefenderAuditFilter(c *gin.Context, defaultLimit, maxLimit int) service.PalDefenderAuditLogFilter {
+	limit, err := strconv.Atoi(strings.TrimSpace(c.DefaultQuery("limit", strconv.Itoa(defaultLimit))))
 	if err != nil || limit <= 0 {
-		limit = 20
+		limit = defaultLimit
 	}
-	if limit > 200 {
-		limit = 200
+	if limit > maxLimit {
+		limit = maxLimit
 	}
-	logs, err := service.ListPalDefenderAuditLogs(database.GetDB(), limit)
+	return service.PalDefenderAuditLogFilter{
+		Limit:     limit,
+		Action:    strings.TrimSpace(c.Query("action")),
+		BatchID:   strings.TrimSpace(c.Query("batch_id")),
+		PlayerUID: strings.TrimSpace(c.Query("player_uid")),
+		UserID:    strings.TrimSpace(c.Query("user_id")),
+		Success:   parseAuditSuccessFilter(c.Query("success")),
+		ErrorCode: strings.TrimSpace(c.Query("error_code")),
+	}
+}
+
+func listPalDefenderAuditLogs(c *gin.Context) {
+	logs, err := service.ListPalDefenderAuditLogsByFilter(getDB(), buildPalDefenderAuditFilter(c, 20, 200))
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		writeBadRequestErr(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, logs)
 }
 
-func grantPalDefenderBatch(c *gin.Context) {
-	var req palDefenderBatchGrantRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-	resolvedTargets, err := resolveBatchGrantTargets(req.Targets)
+func exportPalDefenderAuditLogs(c *gin.Context) {
+	logs, err := service.ListPalDefenderAuditLogsByFilter(getDB(), buildPalDefenderAuditFilter(c, 200, 1000))
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error":      err.Error(),
-			"error_code": tool.PalDefenderErrorCode(err),
-		})
+		writeBadRequestErr(c, err)
 		return
 	}
-	selectedPresets, presetGrant, err := tool.ResolvePalDefenderGrantPresets(req.PresetNames)
-	if err != nil {
-		writePalDefenderError(c, err)
-		return
-	}
-	mergedGrant, err := tool.NormalizePalDefenderGrantPlan(req.Grant.Merge(presetGrant))
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-	appliedPresetNames := make([]string, 0, len(selectedPresets))
-	for _, preset := range selectedPresets {
-		appliedPresetNames = append(appliedPresetNames, preset.Name)
-	}
-	batchID := fmt.Sprintf("%020d", time.Now().UTC().UnixNano())
+	fileName := fmt.Sprintf("paldefender-audit-%s.json", time.Now().UTC().Format("20060102-150405"))
+	c.Header("Content-Type", "application/json")
+	c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=%q", fileName))
+	c.JSON(http.StatusOK, logs)
+}
+
+func executePalDefenderBatchGrant(c *gin.Context, resolvedTargets []palDefenderResolvedTarget, mergedGrant tool.PalDefenderGrantPlan, appliedPresetNames []string, action string, sourceBatchID string, requestedTargetCount int) palDefenderBatchGrantResponse {
+	startedAt := time.Now().UTC()
+	batchID := fmt.Sprintf("%020d", startedAt.UnixNano())
 	results := make([]palDefenderBatchGrantResult, 0, len(resolvedTargets))
 	successCount := 0
 	failureCount := 0
+	failureCodes := map[string]int{}
 	for _, target := range resolvedTargets {
 		result := palDefenderBatchGrantResult{
 			PlayerUID: target.PlayerUID,
@@ -213,7 +264,8 @@ func grantPalDefenderBatch(c *gin.Context) {
 			result.Error = err.Error()
 			result.ErrorCode = tool.PalDefenderErrorCode(err)
 			failureCount++
-			recordPalDefenderAuditLog(c, "batch-grant", batchID, target.playerActionTarget, target.Nickname, appliedPresetNames, mergedGrant, tool.PalDefenderAPIResponse{}, err)
+			incrementFailureCode(failureCodes, result.ErrorCode)
+			recordPalDefenderAuditLog(c, action, batchID, target.playerActionTarget, target.Nickname, appliedPresetNames, mergedGrant, tool.PalDefenderAPIResponse{}, err)
 			results = append(results, result)
 			continue
 		}
@@ -222,7 +274,8 @@ func grantPalDefenderBatch(c *gin.Context) {
 			result.Error = err.Error()
 			result.ErrorCode = tool.PalDefenderErrorCode(err)
 			failureCount++
-			recordPalDefenderAuditLog(c, "batch-grant", batchID, target.playerActionTarget, target.Nickname, appliedPresetNames, mergedGrant, tool.PalDefenderAPIResponse{}, err)
+			incrementFailureCode(failureCodes, result.ErrorCode)
+			recordPalDefenderAuditLog(c, action, batchID, target.playerActionTarget, target.Nickname, appliedPresetNames, mergedGrant, tool.PalDefenderAPIResponse{}, err)
 			results = append(results, result)
 			continue
 		}
@@ -232,11 +285,12 @@ func grantPalDefenderBatch(c *gin.Context) {
 			result.Error = err.Error()
 			result.ErrorCode = tool.PalDefenderErrorCode(err)
 			failureCount++
-			recordPalDefenderAuditLog(c, "batch-grant", batchID, palDefenderResolvedTarget{playerActionTarget: playerActionTarget{PlayerUID: target.PlayerUID, UserID: userID, SteamID: target.SteamID}}.playerActionTarget, target.Nickname, appliedPresetNames, mergedGrant, tool.PalDefenderAPIResponse{}, err)
+			incrementFailureCode(failureCodes, result.ErrorCode)
+			recordPalDefenderAuditLog(c, action, batchID, playerActionTarget{PlayerUID: target.PlayerUID, UserID: userID, SteamID: target.SteamID}, target.Nickname, appliedPresetNames, mergedGrant, tool.PalDefenderAPIResponse{}, err)
 			results = append(results, result)
 			continue
 		}
-		response, err := tool.PalDefenderGive(request)
+		response, err := palDefenderGiveFunc(request)
 		if err != nil {
 			result.Error = err.Error()
 			result.ErrorCode = tool.PalDefenderErrorCode(err)
@@ -244,22 +298,124 @@ func grantPalDefenderBatch(c *gin.Context) {
 				result.Errors = pdErr.Response.Errors
 			}
 			failureCount++
-			recordPalDefenderAuditLog(c, "batch-grant", batchID, playerActionTarget{PlayerUID: target.PlayerUID, UserID: userID, SteamID: target.SteamID}, target.Nickname, appliedPresetNames, mergedGrant, response, err)
+			incrementFailureCode(failureCodes, result.ErrorCode)
+			recordPalDefenderAuditLog(c, action, batchID, playerActionTarget{PlayerUID: target.PlayerUID, UserID: userID, SteamID: target.SteamID}, target.Nickname, appliedPresetNames, mergedGrant, response, err)
 			results = append(results, result)
 			continue
 		}
 		result.Success = true
 		successCount++
-		recordPalDefenderAuditLog(c, "batch-grant", batchID, playerActionTarget{PlayerUID: target.PlayerUID, UserID: userID, SteamID: target.SteamID}, target.Nickname, appliedPresetNames, mergedGrant, response, nil)
+		recordPalDefenderAuditLog(c, action, batchID, playerActionTarget{PlayerUID: target.PlayerUID, UserID: userID, SteamID: target.SteamID}, target.Nickname, appliedPresetNames, mergedGrant, response, nil)
 		results = append(results, result)
 	}
-	c.JSON(http.StatusOK, palDefenderBatchGrantResponse{
-		Success:            failureCount == 0,
-		BatchID:            batchID,
-		TargetCount:        len(resolvedTargets),
-		SuccessCount:       successCount,
-		FailureCount:       failureCount,
-		AppliedPresetNames: appliedPresetNames,
-		Results:            results,
-	})
+	completedAt := time.Now().UTC()
+	return palDefenderBatchGrantResponse{
+		Success:              failureCount == 0,
+		BatchID:              batchID,
+		SourceBatchID:        sourceBatchID,
+		RequestedTargetCount: requestedTargetCount,
+		TargetCount:          len(resolvedTargets),
+		SuccessCount:         successCount,
+		FailureCount:         failureCount,
+		FailureCodes:         failureCodes,
+		AppliedPresetNames:   appliedPresetNames,
+		CompletedAt:          completedAt,
+		DurationMs:           completedAt.Sub(startedAt).Milliseconds(),
+		Results:              results,
+	}
+}
+
+func decodePalDefenderGrantPlan(raw any) (tool.PalDefenderGrantPlan, error) {
+	var plan tool.PalDefenderGrantPlan
+	encoded, err := json.Marshal(raw)
+	if err != nil {
+		return plan, err
+	}
+	if err := json.Unmarshal(encoded, &plan); err != nil {
+		return plan, err
+	}
+	return tool.NormalizePalDefenderGrantPlan(plan)
+}
+
+func retryPalDefenderBatch(c *gin.Context) {
+	var req palDefenderBatchRetryRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		writeBadRequestErr(c, err)
+		return
+	}
+	req.BatchID = strings.TrimSpace(req.BatchID)
+	if req.BatchID == "" {
+		writeBadRequestCode(c, "batch_id is required", "paldefender_batch_id_required")
+		return
+	}
+	failedOnly := true
+	if req.FailedOnly != nil {
+		failedOnly = *req.FailedOnly
+	}
+	logs, err := service.ListPalDefenderAuditLogsByFilter(getDB(), service.PalDefenderAuditLogFilter{Limit: 500, BatchID: req.BatchID})
+	if err != nil {
+		writeBadRequestErr(c, err)
+		return
+	}
+	selectedLogs := make([]database.PalDefenderAuditLog, 0, len(logs))
+	for _, log := range logs {
+		if log.Action != "batch-grant" && log.Action != "batch-grant-retry" {
+			continue
+		}
+		if failedOnly && log.Success {
+			continue
+		}
+		selectedLogs = append(selectedLogs, log)
+	}
+	if len(selectedLogs) == 0 {
+		writeBadRequestCode(c, "no retryable batch logs found", "paldefender_retry_targets_empty")
+		return
+	}
+	mergedGrant, err := decodePalDefenderGrantPlan(selectedLogs[0].Grant)
+	if err != nil {
+		writeBadRequestCode(c, err.Error(), "paldefender_retry_grant_invalid")
+		return
+	}
+	targets := make([]playerActionTarget, 0, len(selectedLogs))
+	for _, log := range selectedLogs {
+		targets = append(targets, playerActionTarget{
+			PlayerUID: strings.TrimSpace(log.PlayerUID),
+			UserID:    strings.TrimSpace(log.UserID),
+			SteamID:   strings.TrimSpace(log.SteamID),
+		})
+	}
+	resolvedTargets, err := resolveBatchGrantTargets(targets)
+	if err != nil {
+		writeBadRequestCode(c, err.Error(), tool.PalDefenderErrorCode(err))
+		return
+	}
+	c.JSON(http.StatusOK, executePalDefenderBatchGrant(c, resolvedTargets, mergedGrant, selectedLogs[0].PresetNames, "batch-grant-retry", req.BatchID, len(targets)))
+}
+
+func grantPalDefenderBatch(c *gin.Context) {
+	var req palDefenderBatchGrantRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		writeBadRequestErr(c, err)
+		return
+	}
+	resolvedTargets, err := resolveBatchGrantTargets(req.Targets)
+	if err != nil {
+		writeBadRequestCode(c, err.Error(), tool.PalDefenderErrorCode(err))
+		return
+	}
+	selectedPresets, presetGrant, err := tool.ResolvePalDefenderGrantPresets(req.PresetNames)
+	if err != nil {
+		writePalDefenderError(c, err)
+		return
+	}
+	mergedGrant, err := tool.NormalizePalDefenderGrantPlan(req.Grant.Merge(presetGrant))
+	if err != nil {
+		writeBadRequestErr(c, err)
+		return
+	}
+	appliedPresetNames := make([]string, 0, len(selectedPresets))
+	for _, preset := range selectedPresets {
+		appliedPresetNames = append(appliedPresetNames, preset.Name)
+	}
+	c.JSON(http.StatusOK, executePalDefenderBatchGrant(c, resolvedTargets, mergedGrant, appliedPresetNames, "batch-grant", "", len(req.Targets)))
 }

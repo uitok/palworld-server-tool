@@ -276,6 +276,8 @@ func PalDefenderErrorCode(err error) string {
 		return "player_offline"
 	case strings.Contains(message, "player action user id not found"):
 		return "player_action_user_id_not_found"
+	case strings.Contains(message, "player action user id does not match player record"), strings.Contains(message, "player action steam id does not match player record"):
+		return "player_action_target_mismatch"
 	}
 	var pdErr *PalDefenderAPIError
 	if errors.As(err, &pdErr) {
@@ -471,6 +473,8 @@ func LoadPalDefenderGrantPresets() ([]PalDefenderGrantPreset, error) {
 	for index, preset := range presets {
 		preset.Name = strings.TrimSpace(preset.Name)
 		preset.Description = strings.TrimSpace(preset.Description)
+		presets[index].Name = preset.Name
+		presets[index].Description = preset.Description
 		if err := validatePalDefenderIdentifier("preset name", preset.Name); err != nil {
 			return nil, err
 		}

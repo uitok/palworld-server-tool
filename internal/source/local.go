@@ -40,6 +40,12 @@ func CopyFromLocal(src, way string) (string, error) {
 	if err = os.MkdirAll(tempDir, fs.ModePerm); err != nil {
 		return "", err
 	}
+	cleanupTempDir := true
+	defer func() {
+		if cleanupTempDir {
+			_ = os.RemoveAll(tempDir)
+		}
+	}()
 
 	// 拷贝文件
 	files, err := filepath.Glob(filepath.Join(savDir, "*.sav"))
@@ -59,5 +65,6 @@ func CopyFromLocal(src, way string) (string, error) {
 	}
 
 	distLevelPath := filepath.Join(tempDir, "Level.sav")
+	cleanupTempDir = false
 	return distLevelPath, nil
 }

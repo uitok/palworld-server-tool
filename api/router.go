@@ -8,6 +8,8 @@ import (
 	swaggerFiles "github.com/swaggo/files"
 	ginSwagger "github.com/swaggo/gin-swagger"
 	"github.com/zaigie/palworld-server-tool/internal/auth"
+	"github.com/zaigie/palworld-server-tool/internal/httpx"
+	"go.etcd.io/bbolt"
 )
 
 type SuccessResponse struct {
@@ -18,9 +20,7 @@ type MessageResponse struct {
 	Message string `json:"message"`
 }
 
-type ErrorResponse struct {
-	Error string `json:"error"`
-}
+type ErrorResponse = httpx.ErrorResponse
 
 type EmptyResponse struct{}
 
@@ -54,7 +54,8 @@ func Logger() gin.HandlerFunc {
 	})
 }
 
-func RegisterRouter(r *gin.Engine) {
+func RegisterRouter(r *gin.Engine, db *bbolt.DB) {
+	setDB(db)
 	r.Use(Logger(), gin.Recovery())
 
 	r.POST("/api/login", loginHandler)
@@ -67,6 +68,8 @@ func RegisterRouter(r *gin.Engine) {
 		anonymousGroup.GET("/server", getServer)
 		anonymousGroup.GET("/server/tool", getServerTool)
 		anonymousGroup.GET("/server/metrics", getServerMetrics)
+		anonymousGroup.GET("/server/overview", getServerOverview)
+		anonymousGroup.GET("/server/task-status", getServerTaskStatus)
 		anonymousGroup.GET("/guild", listGuilds)
 		anonymousGroup.GET("/guild/:admin_player_uid", getGuild)
 	}
@@ -75,6 +78,8 @@ func RegisterRouter(r *gin.Engine) {
 	OptionalGroup.Use(auth.OptionalJWTMiddleware())
 	{
 		OptionalGroup.GET("/online_player", listOnlinePlayers)
+		OptionalGroup.GET("/player/overview", listPlayerOverviews)
+		OptionalGroup.GET("/player/:player_uid/overview", getPlayerOverviewDetail)
 		OptionalGroup.GET("/player", listPlayers)
 		OptionalGroup.GET("/player/:player_uid", getPlayer)
 	}
@@ -84,10 +89,17 @@ func RegisterRouter(r *gin.Engine) {
 	{
 		authGroup.POST("/server/broadcast", publishBroadcast)
 		authGroup.POST("/server/shutdown", shutdownServer)
+		authGroup.POST("/server/sync", syncData)
+		authGroup.POST("/server/backup", createBackupNow)
 		authGroup.GET("/server/paldefender/status", getPalDefenderStatus)
 		authGroup.GET("/server/paldefender/audit", listPalDefenderAuditLogs)
+		authGroup.GET("/server/paldefender/audit/export", exportPalDefenderAuditLogs)
 		authGroup.POST("/server/paldefender/grant-batch", grantPalDefenderBatch)
+		authGroup.POST("/server/paldefender/grant-batch/retry", retryPalDefenderBatch)
 		authGroup.PUT("/player", putPlayers)
+		authGroup.POST("/player/batch", batchPlayerAction)
+		authGroup.GET("/player/search/items", searchPlayerItems)
+		authGroup.GET("/player/search/pals", searchPlayerPals)
 		authGroup.POST("/player/:player_uid/kick", kickPlayer)
 		authGroup.POST("/player/:player_uid/ban", banPlayer)
 		authGroup.POST("/player/:player_uid/unban", unbanPlayer)

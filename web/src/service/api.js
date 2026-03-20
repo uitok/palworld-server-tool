@@ -15,6 +15,9 @@ class ApiService extends Service {
   async getServerMetrics() {
     return this.fetch(`/api/server/metrics`).get().json();
   }
+  async getServerOverview() {
+    return this.fetch(`/api/server/overview`).get().json();
+  }
   async sendBroadcast(param) {
     let data = param;
     return this.fetch(`/api/server/broadcast`).post(data).json();
@@ -22,6 +25,14 @@ class ApiService extends Service {
   async shutdownServer(param) {
     let data = param;
     return this.fetch(`/api/server/shutdown`).post(data).json();
+  }
+
+  async syncServer(param) {
+    return this.fetch(`/api/server/sync`).post(param).json();
+  }
+
+  async createBackup() {
+    return this.fetch(`/api/server/backup`).post().json();
   }
 
   async getPalDefenderStatus() {
@@ -33,6 +44,15 @@ class ApiService extends Service {
     return this.fetch(`/api/server/paldefender/audit?${query}`).get().json();
   }
 
+  async exportPalDefenderAuditLogs(param) {
+    const query = this.generateQuery(param);
+    return this.fetch(`/api/server/paldefender/audit/export?${query}`).get().blob();
+  }
+
+  async retryPalDefenderBatch(param) {
+    return this.fetch(`/api/server/paldefender/grant-batch/retry`).post(param).json();
+  }
+
   async grantPalDefenderBatch(param) {
     return this.fetch(`/api/server/paldefender/grant-batch`).post(param).json();
   }
@@ -40,6 +60,30 @@ class ApiService extends Service {
   async getPlayerList(param) {
     const query = this.generateQuery(param);
     return this.fetch(`/api/player?${query}`).get().json();
+  }
+
+  async getPlayerOverviewList(param) {
+    const query = this.generateQuery(param);
+    return this.fetch(`/api/player/overview?${query}`).get().json();
+  }
+
+  async getPlayerOverviewDetail(param) {
+    const { playerUid } = param;
+    return this.fetch(`/api/player/${playerUid}/overview`).get().json();
+  }
+
+  async searchPlayerItems(param) {
+    const query = this.generateQuery(param);
+    return this.fetch(`/api/player/search/items?${query}`).get().json();
+  }
+
+  async searchPlayerPals(param) {
+    const query = this.generateQuery(param);
+    return this.fetch(`/api/player/search/pals?${query}`).get().json();
+  }
+
+  async batchPlayerAction(param) {
+    return this.fetch(`/api/player/batch`).post(param).json();
   }
   async getOnlinePlayerList() {
     return this.fetch(`/api/online_player`).get().json();

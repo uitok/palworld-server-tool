@@ -28,12 +28,12 @@ type LoginInfo struct {
 func loginHandler(c *gin.Context) {
 	var loginInfo LoginInfo
 	if err := c.ShouldBindJSON(&loginInfo); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		writeBadRequestErr(c, err)
 		return
 	}
 	correctPassword := viper.GetString("web.password")
 	if loginInfo.Password != correctPassword {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "incorrect password"})
+		writeError(c, http.StatusUnauthorized, "incorrect password", "auth_failed", nil, 0)
 		return
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
@@ -41,7 +41,7 @@ func loginHandler(c *gin.Context) {
 	})
 	tokenString, err := token.SignedString(auth.GetSecretKey())
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "could not generate token"})
+		writeBadRequestCode(c, "could not generate token", "token_generation_failed")
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"token": tokenString})

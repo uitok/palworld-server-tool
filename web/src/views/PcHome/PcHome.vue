@@ -113,6 +113,26 @@ const toPalConf = () => {
   window.open("/pal-conf");
 };
 
+const toOpsOverview = () => {
+  window.location.href = "/ops";
+};
+
+const toPlayersOverview = () => {
+  window.location.href = "/players";
+};
+
+const getOpsOverviewLabel = () => {
+  if (locale.value === "en") return "Ops Overview";
+  if (locale.value === "ja") return "運用ダッシュボード";
+  return "运维总览";
+};
+
+const getPlayersOverviewLabel = () => {
+  if (locale.value === "en") return "Player Workspace";
+  if (locale.value === "ja") return "プレイヤーワークスペース";
+  return "玩家工作台";
+};
+
 const toGithub = () => {
   window.open("https://github.com/zaigie/palworld-server-tool/releases");
 };
@@ -580,6 +600,24 @@ const renderIcon = (icon, color = "#666") => {
   };
 };
 const controlCenterOption = [
+  {
+    label: () => {
+      return h("div", null, {
+        default: () => getOpsOverviewLabel(),
+      });
+    },
+    key: "ops",
+    icon: renderIcon(AdminPanelSettingsOutlined),
+  },
+  {
+    label: () => {
+      return h("div", null, {
+        default: () => getPlayersOverviewLabel(),
+      });
+    },
+    key: "players",
+    icon: renderIcon(SupervisedUserCircleRound),
+  },
   // {
   //   label: () => {
   //     return h("div", null, {
@@ -642,7 +680,11 @@ const controlCenterOption = [
   },
 ];
 const handleSelectControlCenter = (key) => {
-  if (key === "palconf") {
+  if (key === "ops") {
+    toOpsOverview();
+  } else if (key === "players") {
+    toPlayersOverview();
+  } else if (key === "palconf") {
     toPalConf();
   } else if (key === "whitelist") {
     handleWhiteList();

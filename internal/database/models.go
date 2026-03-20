@@ -66,6 +66,69 @@ type Player struct {
 	Items *Items `json:"items"`
 }
 
+type PlayerGuildSummary struct {
+	Name           string `json:"name"`
+	AdminPlayerUid string `json:"admin_player_uid"`
+	BaseCampLevel  int32  `json:"base_camp_level"`
+	MemberCount    int    `json:"member_count"`
+}
+
+type PlayerOverviewSummary struct {
+	PlayerUid       string              `json:"player_uid"`
+	Nickname        string              `json:"nickname"`
+	UserId          string              `json:"user_id"`
+	SteamId         string              `json:"steam_id"`
+	AccountName     string              `json:"account_name"`
+	Level           int32               `json:"level"`
+	LastOnline      time.Time           `json:"last_online"`
+	SaveLastOnline  string              `json:"save_last_online"`
+	Online          bool                `json:"online"`
+	Whitelisted     bool                `json:"whitelisted"`
+	BuildingCount   int32               `json:"building_count"`
+	LocationX       float64             `json:"location_x"`
+	LocationY       float64             `json:"location_y"`
+	ItemCount       int                 `json:"item_count"`
+	UniqueItemCount int                 `json:"unique_item_count"`
+	PalCount        int                 `json:"pal_count"`
+	Guild           *PlayerGuildSummary `json:"guild,omitempty"`
+}
+
+type PlayerOverview struct {
+	Summary PlayerOverviewSummary `json:"summary"`
+	Player  Player                `json:"player"`
+}
+
+type PlayerItemSearchHit struct {
+	PlayerUid    string `json:"player_uid"`
+	Nickname     string `json:"nickname"`
+	UserId       string `json:"user_id"`
+	SteamId      string `json:"steam_id"`
+	Online       bool   `json:"online"`
+	Whitelisted  bool   `json:"whitelisted"`
+	GuildName    string `json:"guild_name,omitempty"`
+	ItemId       string `json:"item_id"`
+	Container    string `json:"container"`
+	StackCount   int32  `json:"stack_count"`
+	PlayerLevel  int32  `json:"player_level"`
+}
+
+type PlayerPalSearchHit struct {
+	PlayerUid    string   `json:"player_uid"`
+	Nickname     string   `json:"nickname"`
+	UserId       string   `json:"user_id"`
+	SteamId      string   `json:"steam_id"`
+	Online       bool     `json:"online"`
+	Whitelisted  bool     `json:"whitelisted"`
+	GuildName    string   `json:"guild_name,omitempty"`
+	PalId        string   `json:"pal_id"`
+	PalNickname  string   `json:"pal_nickname"`
+	Level        int32    `json:"level"`
+	Gender       string   `json:"gender"`
+	IsLucky      bool     `json:"is_lucky"`
+	IsBoss       bool     `json:"is_boss"`
+	Skills       []string `json:"skills"`
+}
+
 type BaseCamp struct {
 	Id        string  `json:"id"`
 	Area      float64 `json:"area"`
@@ -132,6 +195,8 @@ type PalDefenderAuditLog struct {
 	Nickname          string    `json:"nickname,omitempty"`
 	PresetNames       []string  `json:"preset_names,omitempty"`
 	Grant             any       `json:"grant,omitempty"`
+	Details           any       `json:"details,omitempty"`
+	Result            any       `json:"result,omitempty"`
 	Success           bool      `json:"success"`
 	Error             string    `json:"error,omitempty"`
 	ErrorCode         string    `json:"error_code,omitempty"`

@@ -41,55 +41,55 @@ type ImportRconPresetRequest struct {
 func sendRconCommand(c *gin.Context) {
 	var req SendRconCommandRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		writeBadRequestErr(c, err)
 		return
 	}
-	rcon, err := service.GetRconCommand(database.GetDB(), req.UUID)
+	rcon, err := service.GetRconCommand(getDB(), req.UUID)
 	if err != nil {
 		if err == service.ErrNoRecord {
-			c.JSON(http.StatusNotFound, gin.H{"error": "Rcon command not found"})
+			writeNotFound(c, "Rcon command not found")
 			return
 		}
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		writeBadRequestErr(c, err)
 		return
 	}
 	execCommand := strings.TrimSpace(fmt.Sprintf("%s %s", rcon.Command, req.Content))
 	response, err := tool.CustomCommand(execCommand)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		writeBadRequestErr(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"message": response})
+	writeSuccessMessage(c, response)
 }
 
 func sendRawRconCommand(c *gin.Context) {
 	var req SendRawRconCommandRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		writeBadRequestErr(c, err)
 		return
 	}
 	req.Command = strings.TrimSpace(req.Command)
 	if req.Command == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Command is required"})
+		writeBadRequestCode(c, "Command is required", "command_required")
 		return
 	}
 	response, err := tool.CustomCommand(req.Command)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		writeBadRequestErr(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"message": response})
+	writeSuccessMessage(c, response)
 }
 
 func importRconPreset(c *gin.Context) {
 	var req ImportRconPresetRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		writeBadRequestErr(c, err)
 		return
 	}
-	count, err := service.ImportRconPresetGroup(database.GetDB(), req.Name)
+	count, err := service.ImportRconPresetGroup(getDB(), req.Name)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		writeBadRequestErr(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{
@@ -114,7 +114,7 @@ func importRconPreset(c *gin.Context) {
 func importRconCommands(c *gin.Context) {
 	file, _, err := c.Request.FormFile("file")
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid file"})
+		writeBadRequestCode(c, "Invalid file", "invalid_file")
 		return
 	}
 	defer file.Close()
@@ -124,7 +124,7 @@ func importRconCommands(c *gin.Context) {
 		line := scanner.Text()
 		parts := strings.Split(line, ",")
 		if len(parts) < 2 {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid file format"})
+			writeBadRequestCode(c, "Invalid file format", "invalid_file_format")
 			return
 		}
 		placeholder := ""
@@ -136,18 +136,18 @@ func importRconCommands(c *gin.Context) {
 			Remark:      parts[1],
 			Placeholder: placeholder,
 		}
-		if err := service.AddRconCommand(database.GetDB(), rconCommand); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		if err := service.AddRconCommand(getDB(), rconCommand); err != nil {
+			writeBadRequestErr(c, err)
 			return
 		}
 	}
 
 	if err := scanner.Err(); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Error reading file"})
+		writeBadRequestCode(c, "Error reading file", "file_read_error")
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"success": true})
+	writeSuccess(c)
 }
 
 // listRconCommand godoc
@@ -162,9 +162,9 @@ func importRconCommands(c *gin.Context) {
 //	@Failure		400	{object}	ErrorResponse
 //	@Router			/api/rcon [get]
 func listRconCommand(c *gin.Context) {
-	rcons, err := service.ListRconCommands(database.GetDB())
+	rcons, err := service.ListRconCommands(getDB())
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		writeBadRequestErr(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, rcons)
@@ -185,15 +185,15 @@ func listRconCommand(c *gin.Context) {
 func addRconCommand(c *gin.Context) {
 	var rcon database.RconCommand
 	if err := c.ShouldBindJSON(&rcon); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		writeBadRequestErr(c, err)
 		return
 	}
-	err := service.AddRconCommand(database.GetDB(), rcon)
+	err := service.AddRconCommand(getDB(), rcon)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		writeBadRequestErr(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"success": true})
+	writeSuccess(c)
 }
 
 // putRconCommand godoc
@@ -213,15 +213,15 @@ func putRconCommand(c *gin.Context) {
 	uuid := c.Param("uuid")
 	var rcon database.RconCommand
 	if err := c.ShouldBindJSON(&rcon); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		writeBadRequestErr(c, err)
 		return
 	}
-	err := service.PutRconCommand(database.GetDB(), uuid, rcon)
+	err := service.PutRconCommand(getDB(), uuid, rcon)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		writeBadRequestErr(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"success": true})
+	writeSuccess(c)
 }
 
 // removeRconCommand godoc
@@ -238,10 +238,10 @@ func putRconCommand(c *gin.Context) {
 //	@Router			/api/rcon/{uuid} [delete]
 func removeRconCommand(c *gin.Context) {
 	uuid := c.Param("uuid")
-	err := service.RemoveRconCommand(database.GetDB(), uuid)
+	err := service.RemoveRconCommand(getDB(), uuid)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		writeBadRequestErr(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"success": true})
+	writeSuccess(c)
 }

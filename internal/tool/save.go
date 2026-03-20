@@ -1,7 +1,6 @@
 package tool
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -25,6 +24,15 @@ type Sturcture struct {
 	Guilds  []database.Guild  `json:"guilds"`
 }
 
+var (
+	downloadFromHTTP   = source.DownloadFromHttp
+	parseK8sAddress    = source.ParseK8sAddress
+	copyFromPod        = source.CopyFromPod
+	parseDockerAddress = source.ParseDockerAddress
+	copyFromContainer  = source.CopyFromContainer
+	copyFromLocal      = source.CopyFromLocal
+)
+
 func getSavCli() (string, error) {
 	savCliPath := viper.GetString("save.decode_path")
 	if savCliPath == "" || savCliPath == "/path/to/your/sav_cli" {
@@ -45,64 +53,72 @@ func getSavCli() (string, error) {
 }
 
 func Decode(file string) error {
+	logger.Infof("starting sav decode from %s source\n", detectSaveSourceKind(file))
+
 	savCli, err := getSavCli()
 	if err != nil {
-		return errors.New("error getting executable path: " + err.Error())
+		return wrapSaveDecodeError(file, "cli", err)
 	}
 
 	levelFilePath, err := getFromSource(file, "decode")
 	if err != nil {
 		return err
 	}
-	defer os.RemoveAll(filepath.Dir(levelFilePath))
-
-	baseUrl := fmt.Sprintf("http://127.0.0.1:%d", viper.GetInt("web.port"))
-	if viper.GetBool("web.tls") && !strings.HasSuffix(baseUrl, "/") {
-		baseUrl = viper.GetString("web.public_url")
+	defer cleanupSaveTempDir(levelFilePath)
+	if err := ensureLevelSaveFile(levelFilePath); err != nil {
+		return wrapSaveSourceError(file, "validate", err)
 	}
 
-	requestUrl := fmt.Sprintf("%s/api/", baseUrl)
+	baseURL := fmt.Sprintf("http://127.0.0.1:%d", viper.GetInt("web.port"))
+	if viper.GetBool("web.tls") && !strings.HasSuffix(baseURL, "/") {
+		baseURL = viper.GetString("web.public_url")
+	}
+
+	requestURL := fmt.Sprintf("%s/api/", baseURL)
 	tokenString, err := auth.GenerateToken()
 	if err != nil {
-		return errors.New("error generating token: " + err.Error())
+		return wrapSaveDecodeError(file, "token", err)
 	}
-	execArgs := []string{"-f", levelFilePath, "--request", requestUrl, "--token", tokenString}
+	execArgs := []string{"-f", levelFilePath, "--request", requestURL, "--token", tokenString}
 	cmd := exec.Command(savCli, execArgs...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	err = cmd.Start()
-	if err != nil {
-		return errors.New("error starting command: " + err.Error())
+	if err := cmd.Start(); err != nil {
+		return wrapSaveDecodeError(file, "start", err)
 	}
-	err = cmd.Wait()
-	if err != nil {
-		return errors.New("error waiting for command: " + err.Error())
+	if err := cmd.Wait(); err != nil {
+		return wrapSaveDecodeError(file, "wait", err)
 	}
 
+	logger.Infof("sav decode finished for %s source\n", detectSaveSourceKind(file))
 	return nil
 }
 
 func Backup() (string, error) {
 	sourcePath := viper.GetString("save.path")
+	logger.Infof("starting backup from %s source\n", detectSaveSourceKind(sourcePath))
 
 	levelFilePath, err := getFromSource(sourcePath, "backup")
 	if err != nil {
 		return "", err
 	}
-	defer os.RemoveAll(filepath.Dir(levelFilePath))
+	defer cleanupSaveTempDir(levelFilePath)
+	if err := ensureLevelSaveFile(levelFilePath); err != nil {
+		return "", wrapSaveSourceError(sourcePath, "validate", err)
+	}
 
 	backupDir, err := GetBackupDir()
 	if err != nil {
-		return "", fmt.Errorf("failed to get backup directory: %s", err)
+		return "", fmt.Errorf("failed to get backup directory: %w", err)
 	}
 
-	currentTime := time.Now().Format("2006-01-02-15-04-05")
-	backupZipFile := filepath.Join(backupDir, fmt.Sprintf("%s.zip", currentTime))
-	err = system.ZipDir(filepath.Dir(levelFilePath), backupZipFile)
-	if err != nil {
-		return "", fmt.Errorf("failed to create backup zip: %s", err)
+	backupName := fmt.Sprintf("%s.zip", time.Now().Format("2006-01-02-15-04-05"))
+	backupZipFile := filepath.Join(backupDir, backupName)
+	if err := system.ZipDir(filepath.Dir(levelFilePath), backupZipFile); err != nil {
+		return "", fmt.Errorf("failed to create backup zip: %w", err)
 	}
-	return filepath.Base(backupZipFile), nil
+	logger.Infof("backup archive created: %s\n", backupName)
+	return backupName, nil
 }
 
 func GetBackupDir() (string, error) {
@@ -124,28 +140,66 @@ func CleanOldBackups(db *bbolt.DB, keepDays int) error {
 	}
 
 	deadline := time.Now().AddDate(0, 0, -keepDays)
-
 	backups, err := service.ListBackups(db, time.Time{}, time.Now())
 	if err != nil {
 		return fmt.Errorf("failed to list backups: %s", err)
 	}
 
+	removedFiles := 0
+	removedRecords := 0
+	missingFiles := 0
+	staleRecords := 0
+	invalidEntries := 0
 	for _, backup := range backups {
-		if backup.SaveTime.Before(deadline) {
-			err = os.Remove(filepath.Join(backupDir, backup.Path))
-			if err != nil {
-				if !os.IsNotExist(err) {
-					logger.Errorf("failed to delete old backup file %s: %s", backup.Path, err)
+		filePath := filepath.Join(backupDir, backup.Path)
+		info, statErr := os.Stat(filePath)
+		if statErr != nil {
+			if os.IsNotExist(statErr) {
+				if err := service.DeleteBackup(db, backup.BackupId); err != nil {
+					logger.Errorf("failed to delete stale backup record from database: %s", err)
+					continue
 				}
+				staleRecords++
+				logger.Warnf("backup file missing, stale record removed: %s\n", backup.Path)
+				continue
 			}
-
-			err = service.DeleteBackup(db, backup.BackupId)
-			if err != nil {
-				logger.Errorf("failed to delete backup record from database: %s", err)
-			}
+			logger.Errorf("failed to stat backup file %s: %s\n", backup.Path, statErr)
+			continue
 		}
+		if info.IsDir() {
+			if err := service.DeleteBackup(db, backup.BackupId); err != nil {
+				logger.Errorf("failed to delete invalid backup record from database: %s", err)
+				continue
+			}
+			invalidEntries++
+			logger.Warnf("backup path points to a directory, stale record removed: %s\n", backup.Path)
+			continue
+		}
+		if !backup.SaveTime.Before(deadline) {
+			continue
+		}
+		if err := os.Remove(filePath); err != nil {
+			if os.IsNotExist(err) {
+				missingFiles++
+				logger.Warnf("backup file already missing during cleanup: %s\n", backup.Path)
+			} else {
+				logger.Errorf("failed to delete old backup file %s: %s\n", backup.Path, err)
+				continue
+			}
+		} else {
+			removedFiles++
+		}
+
+		if err := service.DeleteBackup(db, backup.BackupId); err != nil {
+			logger.Errorf("failed to delete backup record from database: %s", err)
+			continue
+		}
+		removedRecords++
 	}
 
+	if removedFiles > 0 || removedRecords > 0 || missingFiles > 0 || staleRecords > 0 || invalidEntries > 0 {
+		logger.Infof("backup cleanup finished: removed_files=%d removed_records=%d missing_files=%d stale_records=%d invalid_entries=%d deadline=%s\n", removedFiles, removedRecords, missingFiles, staleRecords, invalidEntries, deadline.UTC().Format(time.RFC3339))
+	}
 	return nil
 }
 
@@ -154,37 +208,63 @@ func getFromSource(file, way string) (string, error) {
 	var err error
 
 	if strings.HasPrefix(file, "http://") || strings.HasPrefix(file, "https://") {
-		// http(s)://url
-		levelFilePath, err = source.DownloadFromHttp(file, way)
+		levelFilePath, err = downloadFromHTTP(file, way)
 		if err != nil {
-			return "", errors.New("error downloading file: " + err.Error())
+			return "", wrapSaveSourceError(file, "download", err)
 		}
 	} else if strings.HasPrefix(file, "k8s://") {
-		// k8s://namespace/pod/container:remotePath
-		namespace, podName, container, remotePath, err := source.ParseK8sAddress(file)
+		namespace, podName, container, remotePath, err := parseK8sAddress(file)
 		if err != nil {
-			return "", errors.New("error parsing k8s address: " + err.Error())
+			return "", wrapSaveSourceError(file, "parse", err)
 		}
-		levelFilePath, err = source.CopyFromPod(namespace, podName, container, remotePath, way)
+		levelFilePath, err = copyFromPod(namespace, podName, container, remotePath, way)
 		if err != nil {
-			return "", errors.New("error copying file from pod: " + err.Error())
+			return "", wrapSaveSourceError(file, "copy", err)
 		}
 	} else if strings.HasPrefix(file, "docker://") {
-		// docker://containerID(Name):remotePath
-		containerId, remotePath, err := source.ParseDockerAddress(file)
+		containerID, remotePath, err := parseDockerAddress(file)
 		if err != nil {
-			return "", errors.New("error parsing docker address: " + err.Error())
+			return "", wrapSaveSourceError(file, "parse", err)
 		}
-		levelFilePath, err = source.CopyFromContainer(containerId, remotePath, way)
+		levelFilePath, err = copyFromContainer(containerID, remotePath, way)
 		if err != nil {
-			return "", errors.New("error copying file from container: " + err.Error())
+			return "", wrapSaveSourceError(file, "copy", err)
 		}
 	} else {
-		// local file
-		levelFilePath, err = source.CopyFromLocal(file, way)
+		levelFilePath, err = copyFromLocal(file, way)
 		if err != nil {
-			return "", errors.New("error copying file to temporary directory: " + err.Error())
+			return "", wrapSaveSourceError(file, "copy", err)
 		}
 	}
 	return levelFilePath, nil
+}
+
+func cleanupSaveTempDir(levelFilePath string) {
+	if strings.TrimSpace(levelFilePath) == "" {
+		return
+	}
+	tempDir := filepath.Dir(levelFilePath)
+	if !strings.HasPrefix(filepath.Base(tempDir), "palworldsav") {
+		return
+	}
+	if err := os.RemoveAll(tempDir); err != nil {
+		logger.Warnf("cleanup temporary save directory failed: %v\n", err)
+	}
+}
+
+func ensureLevelSaveFile(levelFilePath string) error {
+	if strings.TrimSpace(levelFilePath) == "" {
+		return os.ErrNotExist
+	}
+	info, err := os.Stat(levelFilePath)
+	if err != nil {
+		return err
+	}
+	if info.IsDir() {
+		return fmt.Errorf("Level.sav path points to a directory: %s", levelFilePath)
+	}
+	if filepath.Base(levelFilePath) != "Level.sav" {
+		return fmt.Errorf("unexpected save file name: %s", filepath.Base(levelFilePath))
+	}
+	return nil
 }

@@ -9,6 +9,7 @@ import (
 	"github.com/dgrijalva/jwt-go"
 	"github.com/gin-gonic/gin"
 	"github.com/spf13/viper"
+	"github.com/zaigie/palworld-server-tool/internal/httpx"
 )
 
 var prefixBearer = "Bearer "
@@ -32,7 +33,8 @@ func JWTAuthMiddleware() gin.HandlerFunc {
 		} else if strings.HasPrefix(authHeader, prefixJWT) {
 			tokenString = strings.TrimPrefix(authHeader, prefixJWT)
 		} else {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "unauthorized - token missing"})
+			httpx.WriteError(c, http.StatusUnauthorized, "unauthorized - token missing", "auth_token_missing", nil, 0)
+			c.Abort()
 			return
 		}
 
@@ -44,14 +46,16 @@ func JWTAuthMiddleware() gin.HandlerFunc {
 		})
 
 		if err != nil {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "unauthorized - invalid token"})
+			httpx.WriteError(c, http.StatusUnauthorized, "unauthorized - invalid token", "auth_token_invalid", nil, 0)
+			c.Abort()
 			return
 		}
 
 		if claims, ok := token.Claims.(jwt.MapClaims); ok && token.Valid {
 			c.Set("claims", claims)
 		} else {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "unauthorized - invalid claims"})
+			httpx.WriteError(c, http.StatusUnauthorized, "unauthorized - invalid claims", "auth_token_claims_invalid", nil, 0)
+			c.Abort()
 			return
 		}
 
@@ -61,7 +65,6 @@ func JWTAuthMiddleware() gin.HandlerFunc {
 
 func OptionalJWTMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		// 默认未登录
 		c.Set("loggedIn", false)
 		authHeader := c.GetHeader("Authorization")
 		if authHeader != "" {

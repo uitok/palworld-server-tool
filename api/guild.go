@@ -28,14 +28,14 @@ import (
 func putGuilds(c *gin.Context) {
 	var guilds []database.Guild
 	if err := c.ShouldBindJSON(&guilds); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		writeBadRequestErr(c, err)
 		return
 	}
-	if err := service.PutGuilds(database.GetDB(), guilds); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+	if err := service.PutGuilds(getDB(), guilds); err != nil {
+		writeBadRequestErr(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"success": true})
+	writeSuccess(c)
 }
 
 // listGuilds godoc
@@ -49,9 +49,9 @@ func putGuilds(c *gin.Context) {
 //	@Failure		400	{object}	ErrorResponse
 //	@Router			/api/guild [get]
 func listGuilds(c *gin.Context) {
-	guilds, err := service.ListGuilds(database.GetDB())
+	guilds, err := service.ListGuilds(getDB())
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		writeBadRequestErr(c, err)
 		return
 	}
 	// default sort by base_camp_level
@@ -74,13 +74,13 @@ func listGuilds(c *gin.Context) {
 //	@Failure		404					{object}	EmptyResponse
 //	@Router			/api/guild/{admin_player_uid} [get]
 func getGuild(c *gin.Context) {
-	guild, err := service.GetGuild(database.GetDB(), c.Param("admin_player_uid"))
+	guild, err := service.GetGuild(getDB(), c.Param("admin_player_uid"))
 	if err != nil {
 		if err == service.ErrNoRecord {
-			c.JSON(http.StatusNotFound, gin.H{})
+			writeNotFound(c, "guild not found")
 			return
 		}
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		writeBadRequestErr(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, guild)

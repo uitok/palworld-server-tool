@@ -8,6 +8,21 @@ const router = createRouter({
       name: "home",
       component: () => import("@/views/Home.vue"),
     },
+    {
+      path: "/ops",
+      name: "operations",
+      component: () => import("@/views/OperationsOverview.vue"),
+    },
+    {
+      path: "/players",
+      name: "players",
+      component: () => import("@/views/PlayersOverview.vue"),
+    },
+    {
+      path: "/paldefender",
+      name: "paldefender",
+      component: () => import("@/views/PalDefenderOverview.vue"),
+    },
   ],
 });
 

@@ -45,10 +45,10 @@ func getPlayerActionUserId(player database.Player) string {
 func listOnlinePlayers(c *gin.Context) {
 	onlinePLayers, err := tool.ShowPlayers()
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		writeBadRequestErr(c, err)
 		return
 	}
-	service.PutPlayersOnline(database.GetDB(), onlinePLayers)
+	service.PutPlayersOnline(getDB(), onlinePLayers)
 	// 未登录隐藏敏感字段
 	if !c.GetBool("loggedIn") {
 		for i := range onlinePLayers {
@@ -81,14 +81,14 @@ func listOnlinePlayers(c *gin.Context) {
 func putPlayers(c *gin.Context) {
 	var players []database.Player
 	if err := c.ShouldBindJSON(&players); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		writeBadRequestErr(c, err)
 		return
 	}
-	if err := service.PutPlayers(database.GetDB(), players); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+	if err := service.PutPlayers(getDB(), players); err != nil {
+		writeBadRequestErr(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"success": true})
+	writeSuccess(c)
 }
 
 // listPlayers godoc
@@ -108,9 +108,9 @@ func putPlayers(c *gin.Context) {
 func listPlayers(c *gin.Context) {
 	orderBy := c.Query("order_by")
 	desc := c.Query("desc")
-	players, err := service.ListPlayers(database.GetDB())
+	players, err := service.ListPlayers(getDB())
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		writeBadRequestErr(c, err)
 		return
 	}
 	//未登录隐藏字段
@@ -158,13 +158,13 @@ func listPlayers(c *gin.Context) {
 //	@Failure		404			{object}	EmptyResponse
 //	@Router			/api/player/{player_uid} [get]
 func getPlayer(c *gin.Context) {
-	player, err := service.GetPlayer(database.GetDB(), c.Param("player_uid"))
+	player, err := service.GetPlayer(getDB(), c.Param("player_uid"))
 	if err != nil {
 		if err == service.ErrNoRecord {
-			c.JSON(http.StatusNotFound, gin.H{})
+			writeNotFound(c, "player not found")
 			return
 		}
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		writeBadRequestErr(c, err)
 		return
 	}
 	//未登录隐藏字段
@@ -195,21 +195,21 @@ func getPlayer(c *gin.Context) {
 //	@Router			/api/player/{player_uid}/kick [post]
 func kickPlayer(c *gin.Context) {
 	playerUid := c.Param("player_uid")
-	player, err := service.GetPlayer(database.GetDB(), playerUid)
+	player, err := service.GetPlayer(getDB(), playerUid)
 	if err != nil {
 		if err == service.ErrNoRecord {
-			c.JSON(http.StatusNotFound, gin.H{"error": "Player not found"})
+			writeNotFound(c, "Player not found")
 			return
 		}
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		writeBadRequestErr(c, err)
 		return
 	}
 	err = tool.KickPlayer(getPlayerActionUserId(player))
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		writeBadRequestErr(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"success": true})
+	writeSuccess(c)
 }
 
 // banPlayer godoc
@@ -229,21 +229,21 @@ func kickPlayer(c *gin.Context) {
 //	@Router			/api/player/{player_uid}/ban [post]
 func banPlayer(c *gin.Context) {
 	playerUid := c.Param("player_uid")
-	player, err := service.GetPlayer(database.GetDB(), playerUid)
+	player, err := service.GetPlayer(getDB(), playerUid)
 	if err != nil {
 		if err == service.ErrNoRecord {
-			c.JSON(http.StatusNotFound, gin.H{"error": "Player not found"})
+			writeNotFound(c, "Player not found")
 			return
 		}
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		writeBadRequestErr(c, err)
 		return
 	}
 	err = tool.BanPlayer(getPlayerActionUserId(player))
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		writeBadRequestErr(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"success": true})
+	writeSuccess(c)
 }
 
 // unbanPlayer godoc
@@ -263,21 +263,21 @@ func banPlayer(c *gin.Context) {
 //	@Router			/api/player/{player_uid}/unban [post]
 func unbanPlayer(c *gin.Context) {
 	playerUid := c.Param("player_uid")
-	player, err := service.GetPlayer(database.GetDB(), playerUid)
+	player, err := service.GetPlayer(getDB(), playerUid)
 	if err != nil {
 		if err == service.ErrNoRecord {
-			c.JSON(http.StatusNotFound, gin.H{"error": "Player not found"})
+			writeNotFound(c, "Player not found")
 			return
 		}
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		writeBadRequestErr(c, err)
 		return
 	}
 	err = tool.UnBanPlayer(getPlayerActionUserId(player))
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		writeBadRequestErr(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"success": true})
+	writeSuccess(c)
 }
 
 // addWhite godoc
@@ -297,14 +297,14 @@ func unbanPlayer(c *gin.Context) {
 func addWhite(c *gin.Context) {
 	var player database.PlayerW
 	if err := c.ShouldBindJSON(&player); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		writeBadRequestErr(c, err)
 		return
 	}
-	if err := service.AddWhitelist(database.GetDB(), player); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+	if err := service.AddWhitelist(getDB(), player); err != nil {
+		writeBadRequestErr(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"success": true})
+	writeSuccess(c)
 }
 
 // listWhite godoc
@@ -318,9 +318,9 @@ func addWhite(c *gin.Context) {
 //	@Failure		400	{object}	ErrorResponse
 //	@Router			/api/whitelist [get]
 func listWhite(c *gin.Context) {
-	players, err := service.ListWhitelist(database.GetDB())
+	players, err := service.ListWhitelist(getDB())
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		writeBadRequestErr(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, players)
@@ -343,14 +343,14 @@ func listWhite(c *gin.Context) {
 func removeWhite(c *gin.Context) {
 	var player database.PlayerW
 	if err := c.ShouldBindJSON(&player); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		writeBadRequestErr(c, err)
 		return
 	}
-	if err := service.RemoveWhitelist(database.GetDB(), player); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+	if err := service.RemoveWhitelist(getDB(), player); err != nil {
+		writeBadRequestErr(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"success": true})
+	writeSuccess(c)
 }
 
 // putWhite godoc
@@ -370,12 +370,12 @@ func removeWhite(c *gin.Context) {
 func putWhite(c *gin.Context) {
 	var players []database.PlayerW
 	if err := c.ShouldBindJSON(&players); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		writeBadRequestErr(c, err)
 		return
 	}
-	if err := service.PutWhitelist(database.GetDB(), players); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+	if err := service.PutWhitelist(getDB(), players); err != nil {
+		writeBadRequestErr(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"success": true})
+	writeSuccess(c)
 }

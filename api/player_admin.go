@@ -90,7 +90,7 @@ type deletePlayerPalsRequest struct {
 const livePlayerActionOnlineWindow = 80 * time.Second
 
 func ensurePlayerOnlineForLiveAction(playerUID string) error {
-	player, err := service.GetPlayer(database.GetDB(), playerUID)
+	player, err := service.GetPlayer(getDB(), playerUID)
 	if err != nil {
 		if err == service.ErrNoRecord {
 			return fmt.Errorf("Player not found")
@@ -103,22 +103,59 @@ func ensurePlayerOnlineForLiveAction(playerUID string) error {
 	return nil
 }
 
+func normalizePlayerActionSteamID(steamID string) string {
+	steamID = strings.TrimSpace(steamID)
+	if strings.HasPrefix(strings.ToLower(steamID), "steam_") {
+		return steamID[6:]
+	}
+	return steamID
+}
+
+func userIDFromSteamID(steamID string) string {
+	normalized := normalizePlayerActionSteamID(steamID)
+	if normalized == "" {
+		return ""
+	}
+	return fmt.Sprintf("steam_%s", normalized)
+}
+
 func resolvePlayerActionUserID(playerUID string, target playerActionTarget) (string, error) {
+	target.UserID = strings.TrimSpace(target.UserID)
+	target.SteamID = normalizePlayerActionSteamID(target.SteamID)
+
+	var player database.Player
+	hasPlayer := false
 	if playerUID != "" {
-		player, err := service.GetPlayer(database.GetDB(), playerUID)
+		loadedPlayer, err := service.GetPlayer(getDB(), playerUID)
 		if err == nil {
-			if userID := getPlayerActionUserId(player); userID != "" {
-				return userID, nil
-			}
+			player = loadedPlayer
+			hasPlayer = true
 		} else if err != service.ErrNoRecord {
 			return "", err
 		}
 	}
-	if strings.TrimSpace(target.UserID) != "" {
-		return strings.TrimSpace(target.UserID), nil
+
+	if hasPlayer {
+		if target.UserID != "" && strings.TrimSpace(player.UserId) != "" && target.UserID != strings.TrimSpace(player.UserId) {
+			return "", fmt.Errorf("player action user id does not match player record")
+		}
+		playerSteamID := normalizePlayerActionSteamID(player.SteamId)
+		if target.SteamID != "" && playerSteamID != "" && target.SteamID != playerSteamID {
+			return "", fmt.Errorf("player action steam id does not match player record")
+		}
 	}
-	if strings.TrimSpace(target.SteamID) != "" {
-		return fmt.Sprintf("steam_%s", strings.TrimSpace(target.SteamID)), nil
+
+	switch {
+	case target.UserID != "":
+		return target.UserID, nil
+	case hasPlayer && strings.TrimSpace(player.UserId) != "":
+		return strings.TrimSpace(player.UserId), nil
+	case target.SteamID != "":
+		return userIDFromSteamID(target.SteamID), nil
+	case hasPlayer:
+		if userID := getPlayerActionUserId(player); userID != "" {
+			return userID, nil
+		}
 	}
 	return "", fmt.Errorf("player action user id not found")
 }
@@ -250,131 +287,162 @@ func buildDeletePalsFilter(filters deletePlayerPalsFilters, limit int) (string, 
 	return strings.Join(parts, " "), nil
 }
 
+func recordPlayerGrantAudit(c *gin.Context, action string, target playerActionTarget, grant any, details any, response tool.PalDefenderAPIResponse, err error) {
+	var result any
+	if err == nil {
+		result = response
+	}
+	recordPalDefenderAuditLogWithDetails(c, action, "", target, "", nil, grant, details, result, response, err)
+}
+
 func grantPlayerItems(c *gin.Context) {
+	baseTarget := playerActionTarget{PlayerUID: c.Param("player_uid")}
 	if err := ensurePlayerOnlineForLiveAction(c.Param("player_uid")); err != nil {
+		recordPalDefenderCommandAudit(c, "grant-item", baseTarget, nil, nil, err)
 		writePlayerActionError(c, err)
 		return
 	}
 	var req grantPlayerItemsRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		writeBadRequestErr(c, err)
 		return
 	}
-	if strings.TrimSpace(req.ItemID) == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "item_id is required"})
+	itemID := strings.TrimSpace(req.ItemID)
+	if itemID == "" {
+		writeBadRequestCode(c, "item_id is required", "item_required")
 		return
 	}
 	if req.Amount <= 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "amount must be greater than 0"})
+		writeBadRequestCode(c, "amount must be greater than 0", "invalid_amount")
 		return
 	}
+	details := map[string]any{"item_id": itemID, "amount": req.Amount}
 	userID, err := resolvePlayerActionUserID(c.Param("player_uid"), req.playerActionTarget)
+	auditTarget := playerActionTarget{PlayerUID: c.Param("player_uid"), UserID: userID, SteamID: req.SteamID}
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		recordPalDefenderCommandAudit(c, "grant-item", auditTarget, details, nil, err)
+		writePlayerActionError(c, err)
 		return
 	}
 	grantPlan := tool.PalDefenderGrantPlan{Items: []tool.PalDefenderPlanItem{{
-		ItemID: strings.TrimSpace(req.ItemID),
+		ItemID: itemID,
 		Amount: req.Amount,
 	}}}
-	response, err := tool.PalDefenderGive(tool.PalDefenderGiveRequest{
+	response, err := palDefenderGiveFunc(tool.PalDefenderGiveRequest{
 		UserID: userID,
 		Items: []tool.PalDefenderGiveItem{{
-			ItemID: strings.TrimSpace(req.ItemID),
+			ItemID: itemID,
 			Count:  req.Amount,
 		}},
 	})
 	if err != nil {
-		recordPalDefenderAuditLog(c, "grant-item", "", playerActionTarget{PlayerUID: c.Param("player_uid"), UserID: userID, SteamID: req.SteamID}, "", nil, grantPlan, response, err)
+		recordPlayerGrantAudit(c, "grant-item", auditTarget, grantPlan, details, response, err)
 		writePalDefenderError(c, err)
 		return
 	}
-	recordPalDefenderAuditLog(c, "grant-item", "", playerActionTarget{PlayerUID: c.Param("player_uid"), UserID: userID, SteamID: req.SteamID}, "", nil, grantPlan, response, nil)
+	recordPlayerGrantAudit(c, "grant-item", auditTarget, grantPlan, details, response, nil)
 	c.JSON(http.StatusOK, gin.H{"success": true, "result": response})
 }
 
 func adjustPlayerItems(c *gin.Context) {
+	baseTarget := playerActionTarget{PlayerUID: c.Param("player_uid")}
 	if err := ensurePlayerOnlineForLiveAction(c.Param("player_uid")); err != nil {
+		recordPalDefenderCommandAudit(c, "adjust-item", baseTarget, nil, nil, err)
 		writePlayerActionError(c, err)
 		return
 	}
 	var req adjustPlayerItemsRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		writeBadRequestErr(c, err)
 		return
 	}
 	itemID := strings.TrimSpace(req.ItemID)
 	if itemID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "item_id is required"})
+		writeBadRequestCode(c, "item_id is required", "item_required")
 		return
 	}
 	userID, err := resolvePlayerActionUserID(c.Param("player_uid"), req.playerActionTarget)
+	auditTarget := playerActionTarget{PlayerUID: c.Param("player_uid"), UserID: userID, SteamID: req.SteamID}
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		recordPalDefenderCommandAudit(c, "adjust-item", auditTarget, map[string]any{"item_id": itemID, "operation": strings.ToLower(strings.TrimSpace(req.Operation)), "amount": req.Amount, "target_count": req.TargetCount}, nil, err)
+		writePlayerActionError(c, err)
 		return
 	}
 	switch strings.ToLower(strings.TrimSpace(req.Operation)) {
 	case "grant":
 		if req.Amount <= 0 {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "amount must be greater than 0"})
+			writeBadRequestCode(c, "amount must be greater than 0", "invalid_amount")
 			return
 		}
-		response, err := tool.PalDefenderGive(tool.PalDefenderGiveRequest{
+		grantPlan := tool.PalDefenderGrantPlan{Items: []tool.PalDefenderPlanItem{{ItemID: itemID, Amount: req.Amount}}}
+		details := map[string]any{"operation": "grant", "item_id": itemID, "amount": req.Amount}
+		response, err := palDefenderGiveFunc(tool.PalDefenderGiveRequest{
 			UserID: userID,
 			Items:  []tool.PalDefenderGiveItem{{ItemID: itemID, Count: req.Amount}},
 		})
 		if err != nil {
+			recordPalDefenderAuditLogWithDetails(c, "adjust-item-grant", "", auditTarget, "", nil, grantPlan, details, nil, response, err)
 			writePalDefenderError(c, err)
 			return
 		}
+		recordPalDefenderAuditLogWithDetails(c, "adjust-item-grant", "", auditTarget, "", nil, grantPlan, details, response, response, nil)
 		c.JSON(http.StatusOK, gin.H{"success": true, "result": response})
 	case "remove":
 		if req.Amount <= 0 {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "amount must be greater than 0"})
+			writeBadRequestCode(c, "amount must be greater than 0", "invalid_amount")
 			return
 		}
 		amount := strconv.Itoa(req.Amount)
-		if player, err := service.GetPlayer(database.GetDB(), c.Param("player_uid")); err == nil {
+		if player, err := service.GetPlayer(getDB(), c.Param("player_uid")); err == nil {
 			currentCount := getPlayerInventoryItemCount(player, itemID)
 			if currentCount > 0 && req.Amount >= currentCount {
 				amount = "all"
 			}
 		}
-		message, err := tool.PalDefenderDeleteItem(userID, itemID, amount)
+		details := map[string]any{"operation": "remove", "item_id": itemID, "requested_amount": req.Amount, "effective_amount": amount}
+		message, err := palDefenderDeleteItemFunc(userID, itemID, amount)
 		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			recordPalDefenderCommandAudit(c, "adjust-item-remove", auditTarget, details, nil, err)
+			writePalDefenderError(c, err)
 			return
 		}
+		recordPalDefenderCommandAudit(c, "adjust-item-remove", auditTarget, details, message, nil)
 		c.JSON(http.StatusOK, gin.H{"success": true, "message": message})
 	case "set":
 		if req.TargetCount < 0 {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "target_count must not be negative"})
+			writeBadRequestCode(c, "target_count must not be negative", "invalid_target_count")
 			return
 		}
-		player, err := service.GetPlayer(database.GetDB(), c.Param("player_uid"))
+		player, err := service.GetPlayer(getDB(), c.Param("player_uid"))
 		if err != nil {
 			if err == service.ErrNoRecord {
-				c.JSON(http.StatusNotFound, gin.H{"error": "Player not found"})
+				writeNotFound(c, "Player not found")
 				return
 			}
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			writeBadRequestErr(c, err)
 			return
 		}
 		currentCount := getPlayerInventoryItemCount(player, itemID)
 		delta := req.TargetCount - currentCount
+		details := map[string]any{"operation": "set", "item_id": itemID, "target_count": req.TargetCount, "current_count": currentCount, "delta": delta}
 		if delta == 0 {
-			c.JSON(http.StatusOK, gin.H{"success": true, "message": "No item changes required"})
+			message := "No item changes required"
+			recordPalDefenderCommandAudit(c, "adjust-item-set", auditTarget, details, message, nil)
+			c.JSON(http.StatusOK, gin.H{"success": true, "message": message})
 			return
 		}
 		if delta > 0 {
-			response, err := tool.PalDefenderGive(tool.PalDefenderGiveRequest{
+			grantPlan := tool.PalDefenderGrantPlan{Items: []tool.PalDefenderPlanItem{{ItemID: itemID, Amount: delta}}}
+			response, err := palDefenderGiveFunc(tool.PalDefenderGiveRequest{
 				UserID: userID,
 				Items:  []tool.PalDefenderGiveItem{{ItemID: itemID, Count: delta}},
 			})
 			if err != nil {
+				recordPalDefenderAuditLogWithDetails(c, "adjust-item-set", "", auditTarget, "", nil, grantPlan, details, nil, response, err)
 				writePalDefenderError(c, err)
 				return
 			}
+			recordPalDefenderAuditLogWithDetails(c, "adjust-item-set", "", auditTarget, "", nil, grantPlan, details, response, response, nil)
 			c.JSON(http.StatusOK, gin.H{"success": true, "result": response})
 			return
 		}
@@ -382,58 +450,70 @@ func adjustPlayerItems(c *gin.Context) {
 		if req.TargetCount == 0 {
 			amount = "all"
 		}
-		message, err := tool.PalDefenderDeleteItem(userID, itemID, amount)
+		details["effective_amount"] = amount
+		message, err := palDefenderDeleteItemFunc(userID, itemID, amount)
 		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			recordPalDefenderCommandAudit(c, "adjust-item-set", auditTarget, details, nil, err)
+			writePalDefenderError(c, err)
 			return
 		}
+		recordPalDefenderCommandAudit(c, "adjust-item-set", auditTarget, details, message, nil)
 		c.JSON(http.StatusOK, gin.H{"success": true, "message": message})
 	default:
-		c.JSON(http.StatusBadRequest, gin.H{"error": "unsupported item operation"})
+		writeBadRequestCode(c, "unsupported item operation", "unsupported_operation")
 	}
 }
 
 func clearPlayerInventory(c *gin.Context) {
+	baseTarget := playerActionTarget{PlayerUID: c.Param("player_uid")}
 	if err := ensurePlayerOnlineForLiveAction(c.Param("player_uid")); err != nil {
+		recordPalDefenderCommandAudit(c, "clear-inventory", baseTarget, nil, nil, err)
 		writePlayerActionError(c, err)
 		return
 	}
 	var req clearPlayerInventoryRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		writeBadRequestErr(c, err)
 		return
 	}
 	userID, err := resolvePlayerActionUserID(c.Param("player_uid"), req.playerActionTarget)
+	auditTarget := playerActionTarget{PlayerUID: c.Param("player_uid"), UserID: userID, SteamID: req.SteamID}
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		recordPalDefenderCommandAudit(c, "clear-inventory", auditTarget, map[string]any{"containers": req.Containers}, nil, err)
+		writePlayerActionError(c, err)
 		return
 	}
 	containers, err := normalizeClearInventoryContainers(req.Containers)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		writeBadRequestErr(c, err)
 		return
 	}
-	message, err := tool.PalDefenderClearInventory(userID, containers)
+	details := map[string]any{"containers": containers}
+	message, err := palDefenderClearInventoryFunc(userID, containers)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		recordPalDefenderCommandAudit(c, "clear-inventory", auditTarget, details, nil, err)
+		writePalDefenderError(c, err)
 		return
 	}
+	recordPalDefenderCommandAudit(c, "clear-inventory", auditTarget, details, message, nil)
 	c.JSON(http.StatusOK, gin.H{"success": true, "message": message})
 }
 
 func grantPlayerPal(c *gin.Context) {
+	baseTarget := playerActionTarget{PlayerUID: c.Param("player_uid")}
 	if err := ensurePlayerOnlineForLiveAction(c.Param("player_uid")); err != nil {
+		recordPalDefenderCommandAudit(c, "grant-pal", baseTarget, nil, nil, err)
 		writePlayerActionError(c, err)
 		return
 	}
 	var req grantPlayerPalRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		writeBadRequestErr(c, err)
 		return
 	}
 	palID, err := tool.ValidatePalDefenderPalID(req.PalID)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		writeBadRequestErr(c, err)
 		return
 	}
 	if req.Amount <= 0 {
@@ -442,9 +522,12 @@ func grantPlayerPal(c *gin.Context) {
 	if req.Level <= 0 {
 		req.Level = 1
 	}
+	details := map[string]any{"pal_id": palID, "level": req.Level, "amount": req.Amount}
 	userID, err := resolvePlayerActionUserID(c.Param("player_uid"), req.playerActionTarget)
+	auditTarget := playerActionTarget{PlayerUID: c.Param("player_uid"), UserID: userID, SteamID: req.SteamID}
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		recordPalDefenderCommandAudit(c, "grant-pal", auditTarget, details, nil, err)
+		writePlayerActionError(c, err)
 		return
 	}
 	pals := make([]tool.PalDefenderGivePal, 0, req.Amount)
@@ -452,34 +535,36 @@ func grantPlayerPal(c *gin.Context) {
 		pals = append(pals, tool.PalDefenderGivePal{PalID: palID, Level: req.Level})
 	}
 	grantPlan := tool.PalDefenderGrantPlan{Pals: []tool.PalDefenderPlanPal{{PalID: palID, Level: req.Level, Amount: req.Amount}}}
-	response, err := tool.PalDefenderGive(tool.PalDefenderGiveRequest{UserID: userID, Pals: pals})
+	response, err := palDefenderGiveFunc(tool.PalDefenderGiveRequest{UserID: userID, Pals: pals})
 	if err != nil {
-		recordPalDefenderAuditLog(c, "grant-pal", "", playerActionTarget{PlayerUID: c.Param("player_uid"), UserID: userID, SteamID: req.SteamID}, "", nil, grantPlan, response, err)
+		recordPlayerGrantAudit(c, "grant-pal", auditTarget, grantPlan, details, response, err)
 		writePalDefenderError(c, err)
 		return
 	}
-	recordPalDefenderAuditLog(c, "grant-pal", "", playerActionTarget{PlayerUID: c.Param("player_uid"), UserID: userID, SteamID: req.SteamID}, "", nil, grantPlan, response, nil)
+	recordPlayerGrantAudit(c, "grant-pal", auditTarget, grantPlan, details, response, nil)
 	c.JSON(http.StatusOK, gin.H{"success": true, "result": response})
 }
 
 func grantPlayerPalEgg(c *gin.Context) {
+	baseTarget := playerActionTarget{PlayerUID: c.Param("player_uid")}
 	if err := ensurePlayerOnlineForLiveAction(c.Param("player_uid")); err != nil {
+		recordPalDefenderCommandAudit(c, "grant-egg", baseTarget, nil, nil, err)
 		writePlayerActionError(c, err)
 		return
 	}
 	var req grantPlayerPalEggRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		writeBadRequestErr(c, err)
 		return
 	}
 	eggID, err := tool.ValidatePalDefenderEggItemID(req.EggID)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		writeBadRequestErr(c, err)
 		return
 	}
 	palID, err := tool.ValidatePalDefenderPalID(req.PalID)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		writeBadRequestErr(c, err)
 		return
 	}
 	if req.Amount <= 0 {
@@ -488,9 +573,12 @@ func grantPlayerPalEgg(c *gin.Context) {
 	if req.Level <= 0 {
 		req.Level = 1
 	}
+	details := map[string]any{"egg_id": eggID, "pal_id": palID, "level": req.Level, "amount": req.Amount}
 	userID, err := resolvePlayerActionUserID(c.Param("player_uid"), req.playerActionTarget)
+	auditTarget := playerActionTarget{PlayerUID: c.Param("player_uid"), UserID: userID, SteamID: req.SteamID}
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		recordPalDefenderCommandAudit(c, "grant-egg", auditTarget, details, nil, err)
+		writePlayerActionError(c, err)
 		return
 	}
 	eggs := make([]tool.PalDefenderGiveEgg, 0, req.Amount)
@@ -498,38 +586,44 @@ func grantPlayerPalEgg(c *gin.Context) {
 		eggs = append(eggs, tool.PalDefenderGiveEgg{ItemID: eggID, PalID: palID, Level: req.Level})
 	}
 	grantPlan := tool.PalDefenderGrantPlan{PalEggs: []tool.PalDefenderPlanEgg{{ItemID: eggID, PalID: palID, Level: req.Level, Amount: req.Amount}}}
-	response, err := tool.PalDefenderGive(tool.PalDefenderGiveRequest{UserID: userID, PalEggs: eggs})
+	response, err := palDefenderGiveFunc(tool.PalDefenderGiveRequest{UserID: userID, PalEggs: eggs})
 	if err != nil {
-		recordPalDefenderAuditLog(c, "grant-egg", "", playerActionTarget{PlayerUID: c.Param("player_uid"), UserID: userID, SteamID: req.SteamID}, "", nil, grantPlan, response, err)
+		recordPlayerGrantAudit(c, "grant-egg", auditTarget, grantPlan, details, response, err)
 		writePalDefenderError(c, err)
 		return
 	}
-	recordPalDefenderAuditLog(c, "grant-egg", "", playerActionTarget{PlayerUID: c.Param("player_uid"), UserID: userID, SteamID: req.SteamID}, "", nil, grantPlan, response, nil)
+	recordPlayerGrantAudit(c, "grant-egg", auditTarget, grantPlan, details, response, nil)
 	c.JSON(http.StatusOK, gin.H{"success": true, "result": response})
 }
 
 func grantPlayerSupport(c *gin.Context) {
+	baseTarget := playerActionTarget{PlayerUID: c.Param("player_uid")}
 	if err := ensurePlayerOnlineForLiveAction(c.Param("player_uid")); err != nil {
+		recordPalDefenderCommandAudit(c, "grant-support", baseTarget, nil, nil, err)
 		writePlayerActionError(c, err)
 		return
 	}
 	var req grantPlayerSupportRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		writeBadRequestErr(c, err)
 		return
 	}
 	if req.Amount <= 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "amount must be greater than 0"})
+		writeBadRequestCode(c, "amount must be greater than 0", "invalid_amount")
 		return
 	}
+	kind := strings.ToLower(strings.TrimSpace(req.Kind))
+	details := map[string]any{"kind": kind, "amount": req.Amount}
 	userID, err := resolvePlayerActionUserID(c.Param("player_uid"), req.playerActionTarget)
+	auditTarget := playerActionTarget{PlayerUID: c.Param("player_uid"), UserID: userID, SteamID: req.SteamID}
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		recordPalDefenderCommandAudit(c, "grant-support", auditTarget, details, nil, err)
+		writePlayerActionError(c, err)
 		return
 	}
 	pdReq := tool.PalDefenderGiveRequest{UserID: userID}
 	grantPlan := tool.PalDefenderGrantPlan{}
-	switch strings.ToLower(strings.TrimSpace(req.Kind)) {
+	switch kind {
 	case "exp":
 		pdReq.EXP = req.Amount
 		grantPlan.EXP = req.Amount
@@ -543,104 +637,123 @@ func grantPlayerSupport(c *gin.Context) {
 		pdReq.AncientTechnologyPoints = req.Amount
 		grantPlan.AncientTechnologyPoints = req.Amount
 	default:
-		c.JSON(http.StatusBadRequest, gin.H{"error": "unsupported support grant kind"})
+		writeBadRequestCode(c, "unsupported support grant kind", "unsupported_grant_kind")
 		return
 	}
-	response, err := tool.PalDefenderGive(pdReq)
+	response, err := palDefenderGiveFunc(pdReq)
 	if err != nil {
-		recordPalDefenderAuditLog(c, "grant-support", "", playerActionTarget{PlayerUID: c.Param("player_uid"), UserID: userID, SteamID: req.SteamID}, "", nil, grantPlan, response, err)
+		recordPlayerGrantAudit(c, "grant-support", auditTarget, grantPlan, details, response, err)
 		writePalDefenderError(c, err)
 		return
 	}
-	recordPalDefenderAuditLog(c, "grant-support", "", playerActionTarget{PlayerUID: c.Param("player_uid"), UserID: userID, SteamID: req.SteamID}, "", nil, grantPlan, response, nil)
+	recordPlayerGrantAudit(c, "grant-support", auditTarget, grantPlan, details, response, nil)
 	c.JSON(http.StatusOK, gin.H{"success": true, "result": response})
 }
 
 func grantPlayerPalTemplate(c *gin.Context) {
+	baseTarget := playerActionTarget{PlayerUID: c.Param("player_uid")}
 	if err := ensurePlayerOnlineForLiveAction(c.Param("player_uid")); err != nil {
+		recordPalDefenderCommandAudit(c, "grant-template", baseTarget, nil, nil, err)
 		writePlayerActionError(c, err)
 		return
 	}
 	var req grantPlayerPalTemplateRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		writeBadRequestErr(c, err)
 		return
 	}
 	if req.Amount <= 0 {
 		req.Amount = 1
 	}
+	details := map[string]any{"template_name": strings.TrimSpace(req.TemplateName), "amount": req.Amount}
 	userID, err := resolvePlayerActionUserID(c.Param("player_uid"), req.playerActionTarget)
+	auditTarget := playerActionTarget{PlayerUID: c.Param("player_uid"), UserID: userID, SteamID: req.SteamID}
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		recordPalDefenderCommandAudit(c, "grant-template", auditTarget, details, nil, err)
+		writePlayerActionError(c, err)
 		return
 	}
 	templateName, err := tool.ValidatePalDefenderTemplateName(strings.TrimSpace(req.TemplateName))
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		writeBadRequestErr(c, err)
 		return
 	}
+	details["template_name"] = templateName
 	templates := make([]string, 0, req.Amount)
 	for i := 0; i < req.Amount; i++ {
 		templates = append(templates, templateName)
 	}
 	grantPlan := tool.PalDefenderGrantPlan{PalTemplates: []tool.PalDefenderPlanTemplate{{TemplateName: templateName, Amount: req.Amount}}}
-	response, err := tool.PalDefenderGive(tool.PalDefenderGiveRequest{UserID: userID, PalTemplates: templates})
+	response, err := palDefenderGiveFunc(tool.PalDefenderGiveRequest{UserID: userID, PalTemplates: templates})
 	if err != nil {
-		recordPalDefenderAuditLog(c, "grant-template", "", playerActionTarget{PlayerUID: c.Param("player_uid"), UserID: userID, SteamID: req.SteamID}, "", nil, grantPlan, response, err)
+		recordPlayerGrantAudit(c, "grant-template", auditTarget, grantPlan, details, response, err)
 		writePalDefenderError(c, err)
 		return
 	}
-	recordPalDefenderAuditLog(c, "grant-template", "", playerActionTarget{PlayerUID: c.Param("player_uid"), UserID: userID, SteamID: req.SteamID}, "", nil, grantPlan, response, nil)
+	recordPlayerGrantAudit(c, "grant-template", auditTarget, grantPlan, details, response, nil)
 	c.JSON(http.StatusOK, gin.H{"success": true, "result": response})
 }
 
 func exportPlayerPals(c *gin.Context) {
+	baseTarget := playerActionTarget{PlayerUID: c.Param("player_uid")}
 	if err := ensurePlayerOnlineForLiveAction(c.Param("player_uid")); err != nil {
+		recordPalDefenderCommandAudit(c, "export-pals", baseTarget, nil, nil, err)
 		writePlayerActionError(c, err)
 		return
 	}
 	var req exportPlayerPalsRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		writeBadRequestErr(c, err)
 		return
 	}
 	userID, err := resolvePlayerActionUserID(c.Param("player_uid"), req.playerActionTarget)
+	auditTarget := playerActionTarget{PlayerUID: c.Param("player_uid"), UserID: userID, SteamID: req.SteamID}
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		recordPalDefenderCommandAudit(c, "export-pals", auditTarget, nil, nil, err)
+		writePlayerActionError(c, err)
 		return
 	}
-	message, err := tool.PalDefenderExportPals(userID)
+	message, err := palDefenderExportPalsFunc(userID)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		recordPalDefenderCommandAudit(c, "export-pals", auditTarget, nil, nil, err)
+		writePalDefenderError(c, err)
 		return
 	}
+	recordPalDefenderCommandAudit(c, "export-pals", auditTarget, nil, message, nil)
 	c.JSON(http.StatusOK, gin.H{"success": true, "message": message})
 }
 
 func deletePlayerPals(c *gin.Context) {
+	baseTarget := playerActionTarget{PlayerUID: c.Param("player_uid")}
 	if err := ensurePlayerOnlineForLiveAction(c.Param("player_uid")); err != nil {
+		recordPalDefenderCommandAudit(c, "delete-pals", baseTarget, nil, nil, err)
 		writePlayerActionError(c, err)
 		return
 	}
 	var req deletePlayerPalsRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		writeBadRequestErr(c, err)
 		return
 	}
 	userID, err := resolvePlayerActionUserID(c.Param("player_uid"), req.playerActionTarget)
+	auditTarget := playerActionTarget{PlayerUID: c.Param("player_uid"), UserID: userID, SteamID: req.SteamID}
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		recordPalDefenderCommandAudit(c, "delete-pals", auditTarget, map[string]any{"filters": req.Filters, "limit": req.Limit}, nil, err)
+		writePlayerActionError(c, err)
 		return
 	}
 	filter, err := buildDeletePalsFilter(req.Filters, req.Limit)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		writeBadRequestErr(c, err)
 		return
 	}
-	message, err := tool.PalDefenderDeletePals(userID, filter)
+	details := map[string]any{"filters": req.Filters, "limit": req.Limit, "filter": filter}
+	message, err := palDefenderDeletePalsFunc(userID, filter)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		recordPalDefenderCommandAudit(c, "delete-pals", auditTarget, details, nil, err)
+		writePalDefenderError(c, err)
 		return
 	}
+	recordPalDefenderCommandAudit(c, "delete-pals", auditTarget, details, message, nil)
 	c.JSON(http.StatusOK, gin.H{"success": true, "message": message})
 }

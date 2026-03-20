@@ -1,0 +1,81 @@
+web:
+  password: "devpass"
+  port: 8080
+  tls: false
+  cert_path: ""
+  key_path: ""
+  public_url: ""
+
+task:
+  sync_interval: 60
+  player_logging: false
+  player_login_message: "Player {username} has joined the server! Current online player count: {online_num}."
+  player_logout_message: "Player {username} has left the server! Current online player count: {online_num}."
+
+rcon:
+  address: "127.0.0.1:25575"
+  password: "replace-me"
+  use_base64: false
+  timeout: 5
+
+rest:
+  address: "http://127.0.0.1:8212"
+  username: "admin"
+  password: "replace-me"
+  timeout: 5
+
+save:
+  # 本地模式：指向包含 Level.sav 的 Saved 目录，或直接指向 Level.sav
+  path: "/path/to/your/Pal/Saved"
+  # 如果 sav_cli 与 pst 主程序在同目录，可留空；也可显式指定绝对路径
+  decode_path: ""
+  sync_interval: 120
+  backup_interval: 14400
+  backup_keep_days: 7
+
+paldefender:
+  enabled: false
+  address: "http://127.0.0.1:17993"
+  auth_key: ""
+  timeout: 5
+  presets:
+    - name: starter_pack
+      description: "新玩家开荒礼包"
+      grant:
+        exp: 5000
+        lifmunks: 5
+        technology_points: 3
+        items:
+          - item_id: PalSphere
+            amount: 20
+        pals:
+          - pal_id: Lamball
+            level: 5
+            amount: 1
+
+manage:
+  kick_non_whitelist: false
+
+# Agent 模式示例：
+# save:
+#   path: "http://127.0.0.1:8081/sync"
+#   decode_path: ""
+#   sync_interval: 120
+#   backup_interval: 14400
+#   backup_keep_days: 7
+
+# Docker 模式示例：
+# save:
+#   path: "docker://palworld-server:/palworld/Pal/Saved"
+#   decode_path: ""
+#   sync_interval: 120
+#   backup_interval: 14400
+#   backup_keep_days: 7
+
+# K8s 模式示例：
+# save:
+#   path: "k8s://default/palworld-0/palworld:/palworld/Pal/Saved"
+#   decode_path: ""
+#   sync_interval: 120
+#   backup_interval: 14400
+#   backup_keep_days: 7

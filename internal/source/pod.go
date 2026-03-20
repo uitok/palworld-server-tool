@@ -73,6 +73,12 @@ func CopyFromPod(namespace, podName, container, remotePath, way string) (string,
 	if err != nil {
 		return "", err
 	}
+	cleanupTempDir := true
+	defer func() {
+		if cleanupTempDir {
+			_ = os.RemoveAll(tempDir)
+		}
+	}()
 
 	err = system.UnTarGzDir(tarStream, tempDir)
 	if err != nil {
@@ -82,6 +88,7 @@ func CopyFromPod(namespace, podName, container, remotePath, way string) (string,
 	logger.Debugf("Directory copied from pod: %s\n", tempDir)
 
 	levelFilePath := filepath.Join(tempDir, "Level.sav")
+	cleanupTempDir = false
 	return levelFilePath, nil
 }
 
@@ -193,6 +200,12 @@ func ParseK8sAddress(address string) (namespace, pod, container, filePath string
 		return "", "", "", "", errors.New("invalid path format")
 	}
 
-	filePath = parts[1]
+	namespace = strings.TrimSpace(namespace)
+	pod = strings.TrimSpace(pod)
+	container = strings.TrimSpace(container)
+	filePath = strings.TrimSpace(parts[1])
+	if pod == "" || container == "" || filePath == "" || (len(pathParts) == 3 && namespace == "") {
+		return "", "", "", "", errors.New("invalid path format")
+	}
 	return namespace, pod, container, filePath, nil
 }
